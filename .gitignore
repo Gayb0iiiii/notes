@@ -1,0 +1,14 @@
+node_modules
+dist
+dev-dist
+.vite
+.turbo
+.env
+.env.*
+!.env.example
+coverage
+*.log
+tmp
+tmp-esbuild-test
+data
+uploads
