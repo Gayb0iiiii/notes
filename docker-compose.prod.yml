@@ -94,14 +94,12 @@ services:
       context: .
       dockerfile: Dockerfile
       target: tools
-    command: pnpm --filter @notes/api exec tsx src/seed.ts
+    command: sh -lc "pnpm --filter @notes/api exec tsx src/migrate.ts && pnpm --filter @notes/api exec tsx src/seed.ts"
     env_file:
       - .env
     depends_on:
       postgres:
         condition: service_healthy
-      api:
-        condition: service_started
     profiles:
       - seed
     restart: "no"
