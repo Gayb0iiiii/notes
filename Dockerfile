@@ -23,7 +23,7 @@ CMD ["pnpm", "--filter", "@notes/web", "preview", "--host", "0.0.0.0", "--port",
 FROM base AS api
 RUN pnpm --filter @notes/api build
 EXPOSE 4000
-CMD ["sh", "-lc", "pnpm --filter @notes/api db:migrate && pnpm --filter @notes/api start"]
+CMD ["sh", "-lc", "node apps/api/dist/migrate.js && node apps/api/dist/index.js"]
 
 FROM base AS collab
 RUN pnpm --filter @notes/collab build
