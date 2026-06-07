@@ -5,6 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { SyncStatus } from "./components/SyncStatus";
 import { Backlinks } from "./components/Backlinks";
 import { AdminPanel } from "./components/AdminPanel";
+import { LocalSettings } from "./components/LocalSettings";
 import { notesApi } from "./lib/api";
 import { bootstrapOfflineWorkspace } from "./lib/demo";
 import { localDb } from "./lib/localDb";
@@ -17,6 +18,7 @@ export function App() {
   const { workspaceId, pages, activePageId, syncStatus, sidebarOpen, setWorkspaceId, setPages, setActivePageId, setSyncStatus, setSidebarOpen } = useAppStore();
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [activeView, setActiveView] = useState<"notes" | "admin">("notes");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const visiblePages = useMemo(() => pages.filter((page) => !page.archivedAt && !page.deletedAt), [pages]);
   const activePage = useMemo(() => visiblePages.find((page) => page.id === activePageId) ?? visiblePages[0] ?? null, [activePageId, visiblePages]);
 
@@ -60,6 +62,16 @@ export function App() {
     }
     const queued = await pendingMetadataOperationCount(id);
     setSyncStatus(queued > 0 ? "saving_locally" : status);
+  }
+
+  function resetToLogin() {
+    setAuthenticated(false);
+    setWorkspaceId(null);
+    setPages([]);
+    setActivePageId(null);
+    setSyncStatus(navigator.onLine ? "synced" : "offline");
+    setActiveView("notes");
+    setSidebarOpen(false);
   }
 
   async function boot() {
@@ -144,6 +156,9 @@ export function App() {
             <button className="view-toggle" type="button" onClick={() => setActiveView(activeView === "admin" ? "notes" : "admin")}>
               {activeView === "admin" ? "Notes" : "Admin"}
             </button>
+            <button className="view-toggle" type="button" onClick={() => setSettingsOpen(true)}>
+              Settings
+            </button>
             <SyncStatus status={syncStatus} />
           </div>
         </header>
@@ -160,6 +175,7 @@ export function App() {
           <section className="empty-state">Create a page to start writing.</section>
         )}
       </main>
+      <LocalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} onRequireLogin={resetToLogin} />
     </div>
   );
 }
