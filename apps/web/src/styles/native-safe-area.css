@@ -1,0 +1,30 @@
+html[data-platform="ios"][data-native="true"] {
+  --native-safe-area-top: 59px;
+  --safe-area-top: max(env(safe-area-inset-top, 0px), var(--native-safe-area-top));
+}
+
+html[data-platform="ios"][data-native="true"] body {
+  padding-top: 0;
+}
+
+html[data-platform="ios"][data-native="true"] .app-shell {
+  min-height: 100dvh;
+}
+
+@media (max-width: 760px) {
+  html[data-platform="ios"][data-native="true"] .topbar {
+    min-height: calc(64px + var(--safe-area-top));
+    padding-top: calc(12px + var(--safe-area-top));
+  }
+
+  html[data-platform="ios"][data-native="true"] .sidebar {
+    padding-top: calc(14px + var(--safe-area-top));
+  }
+
+  html[data-platform="ios"][data-native="true"] .login-screen,
+  html[data-platform="ios"][data-native="true"] .loading-screen,
+  html[data-platform="ios"][data-native="true"] .empty-state,
+  html[data-platform="ios"][data-native="true"] .editor-empty {
+    padding-top: calc(24px + var(--safe-area-top));
+  }
+}
