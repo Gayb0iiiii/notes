@@ -4,6 +4,7 @@ import { Capacitor } from "@capacitor/core";
 import { App } from "./App";
 import { registerServiceWorker } from "./lib/registerServiceWorker";
 import "./styles/app.css";
+import "./styles/settings.css";
 import "./styles/native-safe-area.css";
 
 const platform = Capacitor.getPlatform();
