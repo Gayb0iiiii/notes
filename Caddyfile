@@ -1,6 +1,7 @@
 {$APP_HOST:localhost} {
   encode zstd gzip
 
+  reverse_proxy /health api:4000
   reverse_proxy /api/* api:4000
   reverse_proxy /collab* collab:4001
   reverse_proxy app-web:5173
