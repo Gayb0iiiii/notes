@@ -1,0 +1,142 @@
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: calc(18px + var(--safe-area-top)) calc(18px + var(--safe-area-right)) calc(18px + var(--safe-area-bottom)) calc(18px + var(--safe-area-left));
+  background: rgb(2 6 23 / 68%);
+}
+
+.settings-dialog {
+  width: min(520px, 100%);
+  max-height: min(720px, 100dvh - 32px);
+  overflow-y: auto;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  background: #111827;
+  box-shadow: 0 22px 60px rgb(0 0 0 / 45%);
+  padding: 18px;
+}
+
+.settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.settings-eyebrow {
+  margin: 0 0 4px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.settings-close {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #e5e7eb;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.settings-close:hover {
+  background: #1e293b;
+}
+
+.settings-section {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid #273246;
+  padding-top: 14px;
+  margin-top: 14px;
+}
+
+.settings-section label {
+  display: grid;
+  gap: 6px;
+  color: #cbd5e1;
+}
+
+.settings-section input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #334155;
+  border-radius: 7px;
+  background: #0b1220;
+  color: #e5e7eb;
+  padding: 0 10px;
+}
+
+.settings-muted {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.settings-primary,
+.settings-actions button {
+  min-height: 42px;
+  border-radius: 7px;
+  padding: 0 12px;
+  text-align: left;
+}
+
+.settings-primary {
+  background: #2563eb;
+  color: #ffffff;
+  text-align: center;
+}
+
+.settings-actions button {
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+.settings-actions button:hover {
+  background: #1e293b;
+}
+
+.settings-actions .settings-danger {
+  border-color: #7f1d1d;
+  background: #2a1015;
+  color: #fca5a5;
+}
+
+.settings-actions .settings-danger:hover {
+  background: #3b1218;
+}
+
+.settings-error {
+  margin: 14px 0 0;
+  border: 1px solid #7f1d1d;
+  border-radius: 8px;
+  background: #2a1015;
+  color: #fca5a5;
+  padding: 10px 12px;
+}
+
+@media (max-width: 760px) {
+  .settings-backdrop {
+    align-items: end;
+    padding: calc(12px + var(--safe-area-top)) calc(10px + var(--safe-area-right)) calc(10px + var(--safe-area-bottom)) calc(10px + var(--safe-area-left));
+  }
+
+  .settings-dialog {
+    width: 100%;
+    max-height: calc(100dvh - var(--safe-area-top) - 18px);
+    border-radius: 14px;
+  }
+}
