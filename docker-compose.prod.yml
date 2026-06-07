@@ -18,6 +18,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api
+    command: sh -lc "node apps/api/dist/migrate.js && node apps/api/dist/index.js"
     env_file:
       - .env
     environment:
