@@ -9,6 +9,7 @@ dev-dist
 coverage
 *.log
 tmp
+.tmp
 tmp-esbuild-test
 data
 uploads

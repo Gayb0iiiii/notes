@@ -2,6 +2,12 @@ import type { LocalOutboxItem, MetadataOperation, PageDto } from "@notes/shared"
 import { notesApi } from "./api";
 import { localDb } from "./localDb";
 
+type MetadataSyncResult = {
+  status?: "applied" | "skipped";
+  reason?: string;
+  page?: PageDto | null;
+};
+
 export async function cachePages(workspaceId: string, pages: PageDto[]): Promise<void> {
   await localDb.localPages.bulkPut(
     pages.map((page) => ({
@@ -43,8 +49,34 @@ export async function flushMetadataOutbox(workspaceId: string): Promise<void> {
     clientCreatedAt: item.createdAt
   }));
   try {
-    await notesApi.syncMetadata(operations);
-    await localDb.localOutbox.bulkDelete(pending.map((item) => item.id));
+    const response = await notesApi.syncMetadata(operations);
+    const results = response.results as MetadataSyncResult[];
+    const completedIds: string[] = [];
+    const failedItems: LocalOutboxItem[] = [];
+
+    for (let index = 0; index < pending.length; index += 1) {
+      const item = pending[index]!;
+      const result = results[index];
+      if (result?.page) {
+        await cachePages(workspaceId, [result.page]);
+        completedIds.push(item.id);
+        continue;
+      }
+      if (result?.status === "applied") {
+        completedIds.push(item.id);
+        continue;
+      }
+
+      const pageId = String(item.payload.pageId ?? item.payload.id ?? "");
+      if (pageId) {
+        const page = await localDb.localPages.get(pageId);
+        if (page) await localDb.localPages.put({ ...page, syncStatus: "conflict" });
+      }
+      failedItems.push({ ...item, retryCount: item.retryCount + 1, status: "failed" });
+    }
+
+    if (completedIds.length > 0) await localDb.localOutbox.bulkDelete(completedIds);
+    if (failedItems.length > 0) await localDb.localOutbox.bulkPut(failedItems);
     window.dispatchEvent(new CustomEvent("notes:outbox-changed"));
   } catch {
     await localDb.localOutbox.bulkPut(pending.map((item) => ({ ...item, retryCount: item.retryCount + 1, status: "failed" })));

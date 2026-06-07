@@ -10,10 +10,10 @@ Self-hosted, local-first collaborative notes for a small private workplace.
 - Admin panel for owner-managed users, roles, password resets, removals, and backup commands.
 - Workspace membership checks for workspace-scoped routes.
 - Nested page metadata, offline Dexie cache, idempotent metadata outbox, archive/restore conflict rules.
-- Tiptap editor with Yjs, y-indexeddb local persistence, Hocuspocus realtime rooms, tables, images, and page mentions.
-- Image upload URL flow for MinIO/S3 plus offline local image queue.
+- Tiptap editor with Yjs, y-indexeddb local persistence, table controls, task/code/quote blocks, and local HTML snapshots.
+- Image paste/drop/file insert with durable local previews and queued offline blobs.
 - Backlink indexing endpoint and simple backlink panel.
-- PWA manifest, responsive mobile layout, and Capacitor config for later iOS/Android wrappers.
+- PWA manifest, app-shell service worker, responsive mobile layout, and committed Capacitor iOS SPM project.
 - Docker Compose, Caddy reverse proxy profile, SQL migration, seed script, and backup script.
 
 ## Local run
@@ -46,15 +46,14 @@ S3_BACKUP_URI="s3://my-notes-backups" scripts/backup.sh
 S3_BACKUP_URI="s3://my-notes-backups" S3_BACKUP_ENDPOINT="https://s3.example.com" scripts/backup.sh
 ```
 
-## Mobile
+## Mobile App
 
-The first mobile target is the installable PWA. After the web app is stable:
+The iOS shell is committed under `apps/web/ios` and uses Swift Package Manager, not CocoaPods.
 
 ```bash
-pnpm --filter @notes/web build
-pnpm --filter @notes/web cap add ios
-pnpm --filter @notes/web cap add android
-pnpm --filter @notes/web cap sync
+pnpm --filter @notes/web app:ios:copy
+pnpm --filter @notes/web app:ios:open
+pnpm --filter @notes/web app:ios:build-sim
 ```
 
-The native shell should ask for the self-hosted server URL on first launch before login.
+The native shell uses the same server URL field as the web app before login.

@@ -17,7 +17,8 @@ export function App() {
   const { workspaceId, pages, activePageId, syncStatus, sidebarOpen, setWorkspaceId, setPages, setActivePageId, setSyncStatus, setSidebarOpen } = useAppStore();
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [activeView, setActiveView] = useState<"notes" | "admin">("notes");
-  const activePage = useMemo(() => pages.find((page) => page.id === activePageId) ?? pages[0] ?? null, [activePageId, pages]);
+  const visiblePages = useMemo(() => pages.filter((page) => !page.archivedAt && !page.deletedAt), [pages]);
+  const activePage = useMemo(() => visiblePages.find((page) => page.id === activePageId) ?? visiblePages[0] ?? null, [activePageId, visiblePages]);
 
   async function loadLocalPages(id: string): Promise<PageDto[]> {
     const localPages = await localDb.localPages.where({ workspaceId: id }).toArray();
@@ -37,9 +38,10 @@ export function App() {
         deletedAt: page.deletedAt ?? null
       }))
       .sort((a, b) => a.sortOrder - b.sortOrder || a.title.localeCompare(b.title));
+    const visibleNextPages = nextPages.filter((page) => !page.archivedAt && !page.deletedAt);
     setPages(nextPages);
-    if (!nextPages.some((page) => page.id === activePageId)) {
-      setActivePageId((nextPages[0] ?? null)?.id ?? null);
+    if (!visibleNextPages.some((page) => page.id === activePageId)) {
+      setActivePageId((visibleNextPages[0] ?? null)?.id ?? null);
     }
     return nextPages;
   }
@@ -78,8 +80,9 @@ export function App() {
       const remote = await notesApi.pages(workspace.id);
       await cachePages(workspace.id, remote.pages);
       setPages(remote.pages);
-      if (!remote.pages.some((page) => page.id === activePageId)) {
-        setActivePageId((remote.pages[0] ?? null)?.id ?? null);
+      const visibleRemotePages = remote.pages.filter((page) => !page.archivedAt && !page.deletedAt);
+      if (!visibleRemotePages.some((page) => page.id === activePageId)) {
+        setActivePageId((visibleRemotePages[0] ?? null)?.id ?? null);
       }
       setAuthenticated(true);
       setSyncStatus("synced");

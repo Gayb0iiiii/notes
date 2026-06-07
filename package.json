@@ -5,13 +5,13 @@
   "type": "module",
   "packageManager": "pnpm@9.15.4",
   "scripts": {
-    "dev": "pnpm -r --parallel dev",
-    "build": "pnpm -r build",
+    "dev": "\"$npm_execpath\" -r --parallel dev",
+    "build": "\"$npm_execpath\" -r build",
     "test": "node --test tests/*.test.mjs",
-    "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck",
-    "db:generate": "pnpm --filter @notes/api db:generate",
-    "db:migrate": "pnpm --filter @notes/api db:migrate"
+    "lint": "\"$npm_execpath\" -r lint",
+    "typecheck": "\"$npm_execpath\" -r typecheck",
+    "db:generate": "\"$npm_execpath\" --filter @notes/api db:generate",
+    "db:migrate": "\"$npm_execpath\" --filter @notes/api db:migrate"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

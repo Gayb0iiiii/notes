@@ -30,6 +30,13 @@ export function apiUrl(path: string): string {
   return `${baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
+export function collabUrl(): string {
+  const baseUrl = getServerUrl();
+  const source = baseUrl ? new URL(baseUrl) : window.location;
+  const protocol = source.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${source.host}/collab`;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 3500);
@@ -66,6 +73,7 @@ export const notesApi = {
   uploadUrl: (input: { workspaceId: string; filename: string; mimeType: string; sizeBytes: number }) =>
     api<{ assetId: string; uploadUrl: string; storageKey: string }>("/api/assets/upload-url", { method: "POST", body: JSON.stringify(input) }),
   completeAsset: (assetId: string) => api<{ asset: unknown }>("/api/assets/complete", { method: "POST", body: JSON.stringify({ assetId }) }),
+  asset: (assetId: string) => api<{ asset: unknown; url: string }>(`/api/assets/${assetId}`),
   backlinks: (pageId: string) => api<{ backlinks: import("@notes/shared").PageDto[] }>(`/api/pages/${pageId}/backlinks`),
   reindexLinks: (pageId: string, targetPageIds: string[]) => api<{ ok: true }>(`/api/pages/${pageId}/reindex-links`, { method: "POST", body: JSON.stringify({ targetPageIds }) })
 };

@@ -408,8 +408,14 @@ button {
 }
 
 .editor-toolbar button:hover,
+.editor-toolbar button.active,
 .icon-upload:hover {
   background: #1e293b;
+}
+
+.editor-toolbar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.38;
 }
 
 .table-insert-controls {
@@ -443,12 +449,88 @@ button {
   display: none;
 }
 
+.editor-error {
+  margin: 0;
+  border-bottom: 1px solid #7f1d1d;
+  background: #2a1015;
+  color: #fca5a5;
+  padding: 8px clamp(16px, 4vw, 44px);
+  font-size: 13px;
+}
+
 .editor-surface {
   min-height: 100%;
   outline: none;
   padding: 28px clamp(16px, 6vw, 72px) 120px;
   font-size: 16px;
   line-height: 1.65;
+}
+
+.editor-surface > *:first-child {
+  margin-top: 0;
+}
+
+.editor-surface p {
+  margin: 0 0 0.85em;
+}
+
+.editor-surface h1,
+.editor-surface h2 {
+  margin: 1.1em 0 0.45em;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.editor-surface h1 {
+  font-size: 28px;
+}
+
+.editor-surface h2 {
+  font-size: 22px;
+}
+
+.editor-surface ul,
+.editor-surface ol {
+  padding-left: 1.35em;
+}
+
+.editor-surface ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.editor-surface li[data-type="taskItem"] {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.editor-surface li[data-type="taskItem"] label {
+  padding-top: 2px;
+}
+
+.editor-surface li[data-type="taskItem"] p {
+  margin: 0;
+}
+
+.editor-surface blockquote {
+  margin: 1em 0;
+  border-left: 3px solid #2563eb;
+  color: #cbd5e1;
+  padding-left: 12px;
+}
+
+.editor-surface pre {
+  overflow-x: auto;
+  border: 1px solid #273246;
+  border-radius: 8px;
+  background: #020617;
+  padding: 12px;
+}
+
+.editor-surface code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 .editor-surface table {
@@ -464,11 +546,30 @@ button {
   border: 1px solid #334155;
   min-width: 120px;
   padding: 6px 8px;
+  vertical-align: top;
+}
+
+.editor-surface th {
+  background: #111827;
+  color: #dbeafe;
 }
 
 .editor-surface img {
   max-width: 100%;
   border-radius: 6px;
+  display: block;
+  margin: 12px 0;
+}
+
+.editor-surface hr {
+  border: 0;
+  border-top: 1px solid #334155;
+  margin: 22px 0;
+}
+
+.editor-surface .ProseMirror-selectednode {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
 }
 
 .page-mention {
@@ -558,6 +659,10 @@ button {
   display: none;
 }
 
+.sidebar-backdrop {
+  display: none;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -577,6 +682,14 @@ button {
     background: #111827;
     color: white;
     box-shadow: 0 8px 24px rgb(15 23 42 / 24%);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 19;
+    background: rgb(2 6 23 / 54%);
   }
 
   .sidebar {

@@ -145,6 +145,7 @@ export function Sidebar({ workspaceId, pages, activePageId, open, onToggle, onSe
   return (
     <>
       <button className="mobile-menu" title="Pages" onClick={onToggle}><Menu size={18} /></button>
+      {open ? <button className="sidebar-backdrop" type="button" aria-label="Close pages" onClick={onToggle} /> : null}
       <aside className={`sidebar ${open ? "open" : ""}`}>
         <div className="sidebar-header">
           <strong>Pages</strong>
