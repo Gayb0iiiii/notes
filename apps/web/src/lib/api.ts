@@ -1,6 +1,7 @@
 import type { MetadataOperation } from "@notes/shared";
 
 const serverUrlKey = "notes.serverUrl";
+const nativeDefaultServerUrl = "https://notes.yeetserver.net";
 
 export interface AdminUser {
   id: string;
@@ -12,7 +13,12 @@ export interface AdminUser {
 }
 
 export function getServerUrl(): string {
-  return window.localStorage.getItem(serverUrlKey) ?? "";
+  const stored = window.localStorage.getItem(serverUrlKey);
+  if (stored) return stored;
+  if (window.location.protocol === "capacitor:" || window.location.protocol === "ionic:") {
+    return nativeDefaultServerUrl;
+  }
+  return "";
 }
 
 export function setServerUrl(value: string): void {

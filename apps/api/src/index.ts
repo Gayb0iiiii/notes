@@ -13,17 +13,19 @@ import { assetRoutes } from "./routes/assets";
 import { backlinkRoutes } from "./routes/backlinks";
 
 const app = Fastify({ logger: true });
+const nativeOrigins = config.NATIVE_APP_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean);
 const allowedOrigins = new Set([
   config.APP_URL,
   "capacitor://localhost",
   "ionic://localhost",
   "http://localhost",
-  "http://localhost:5173"
+  "http://localhost:5173",
+  ...nativeOrigins
 ]);
 
 await app.register(cors, {
   origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin)) {
+    if (!origin || allowedOrigins.has(origin) || /^https?:\/\/localhost(?::\d+)?$/.test(origin)) {
       callback(null, true);
       return;
     }

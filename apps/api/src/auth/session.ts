@@ -9,6 +9,12 @@ import type { Role } from "@notes/shared";
 const sessionId = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", 48);
 const cookieName = "notes_session";
 const sessionTtlMs = 1000 * 60 * 60 * 24 * config.SESSION_TTL_DAYS;
+const sessionCookieOptions = {
+  httpOnly: true,
+  secure: isProduction,
+  sameSite: isProduction ? "none" : "lax",
+  path: "/"
+} as const;
 
 export interface AuthContext {
   userId: string;
@@ -27,10 +33,7 @@ export async function createSession(reply: FastifyReply, userId: string): Promis
   const expiresAt = new Date(Date.now() + sessionTtlMs);
   await db.insert(sessions).values({ id, userId, expiresAt });
   reply.setCookie(cookieName, id, {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: "lax",
-    path: "/",
+    ...sessionCookieOptions,
     maxAge: Math.floor(sessionTtlMs / 1000),
     expires: expiresAt
   });
@@ -41,7 +44,7 @@ export async function clearSession(request: FastifyRequest, reply: FastifyReply)
   if (id) {
     await db.delete(sessions).where(eq(sessions.id, id));
   }
-  reply.clearCookie(cookieName, { path: "/" });
+  reply.clearCookie(cookieName, sessionCookieOptions);
 }
 
 export async function requireAuth(request: FastifyRequest): Promise<AuthContext> {
