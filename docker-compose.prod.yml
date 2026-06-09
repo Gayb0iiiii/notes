@@ -18,7 +18,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: api
-    command: sh -lc "node apps/api/dist/migrate.js && node apps/api/dist/index.js"
+    command: sh -lc "pnpm --filter @notes/api exec tsx src/migrate.ts && pnpm --filter @notes/api exec tsx src/index.ts"
     env_file:
       - .env
     environment:
