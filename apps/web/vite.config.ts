@@ -1,6 +1,8 @@
 import { defineConfig, type Plugin } from "vite";
 import path from "node:path";
 
+const allowedHosts = ["notes.yeetserver.net"];
+
 function pwaRegisterStub(): Plugin {
   return {
     name: "pwa-register-stub",
@@ -40,7 +42,13 @@ export default defineConfig(({ command }) => ({
   plugins: [
     pwaRegisterStub()
   ],
+  preview: {
+    allowedHosts,
+    host: "0.0.0.0",
+    port: 5173
+  },
   server: {
+    allowedHosts,
     port: 5173,
     proxy: {
       "/api": "http://localhost:4000",
