@@ -13,8 +13,24 @@ import { assetRoutes } from "./routes/assets";
 import { backlinkRoutes } from "./routes/backlinks";
 
 const app = Fastify({ logger: true });
+const allowedOrigins = new Set([
+  config.APP_URL,
+  "capacitor://localhost",
+  "ionic://localhost",
+  "http://localhost",
+  "http://localhost:5173"
+]);
 
-await app.register(cors, { origin: config.APP_URL, credentials: true });
+await app.register(cors, {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.has(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(`Origin not allowed: ${origin}`), false);
+  },
+  credentials: true
+});
 await app.register(cookie, { secret: config.SESSION_SECRET });
 await app.register(csrf, { cookieOpts: { sameSite: "lax", secure: isProduction } });
 await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
