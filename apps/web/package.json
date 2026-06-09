@@ -9,8 +9,8 @@
     "build": "node scripts/build-static.mjs",
     "build:vite": "tsc -p tsconfig.json && vite build",
     "app:ios:copy": "node scripts/build-static.mjs && cap copy ios",
-    "app:ios:open": "open ios/App/App.xcodeproj",
-    "app:ios:build-sim": "node scripts/build-static.mjs && cap copy ios && DEVELOPER_DIR=${DEVELOPER_DIR:-/Users/asherarcher/Downloads/Xcode.app/Contents/Developer} xcodebuild -project ios/App/App.xcodeproj -scheme App -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/notes-ios-derived build",
+    "app:ios:open": "open ios/App/Note_Taker.xcodeproj",
+    "app:ios:build-sim": "node scripts/build-static.mjs && cap copy ios && DEVELOPER_DIR=${DEVELOPER_DIR:-/Users/asherarcher/Downloads/Xcode.app/Contents/Developer} xcodebuild -project ios/App/Note_Taker.xcodeproj -scheme Note_Taker -destination 'platform=iOS Simulator,name=iPhone 17' -derivedDataPath /tmp/notes-ios-derived build",
     "preview": "vite preview --host 0.0.0.0",
     "lint": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit"
