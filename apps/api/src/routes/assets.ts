@@ -4,7 +4,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { validateImageUpload } from "@notes/shared";
+import { validateAssetUpload } from "@notes/shared";
 import { config } from "../config";
 import { requireAuth, requireWorkspaceRole } from "../auth/session";
 import { db } from "../db/client";
@@ -29,7 +29,7 @@ export const assetRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(request.body);
     await requireWorkspaceRole(request, body.workspaceId);
-    const validation = validateImageUpload(body);
+    const validation = validateAssetUpload(body);
     if (!validation.ok) return reply.code(400).send({ error: validation.reason });
 
     const [asset] = await db
