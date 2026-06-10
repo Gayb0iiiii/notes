@@ -155,6 +155,10 @@ function writeStoredCookie(cookie: string): void {
   window.localStorage.setItem(nativeCookieKey, cookie);
 }
 
+export function nativeSessionCookie(): string | null {
+  return readStoredCookie();
+}
+
 export function clearStoredSession(): void {
   window.localStorage.removeItem(nativeCookieKey);
 }
