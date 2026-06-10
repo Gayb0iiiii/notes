@@ -14,12 +14,24 @@ const pool = new pg.Pool({ connectionString: env.DATABASE_URL });
 
 const roomSchema = /^workspace:([0-9a-f-]+):page:([0-9a-f-]+)$/i;
 
-async function authenticate(cookieHeader: string | undefined, workspaceId: string): Promise<{ userId: string; displayName: string }> {
-  const sessionId = cookieHeader
-    ?.split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith("notes_session="))
-    ?.split("=")[1];
+function sessionIdFromCookie(cookieHeader: string | undefined): string | null {
+  return (
+    cookieHeader
+      ?.split(";")
+      .map((part) => part.trim())
+      .find((part) => part.startsWith("notes_session="))
+      ?.split("=")[1] ?? null
+  );
+}
+
+function sessionIdFromToken(token: unknown): string | null {
+  if (typeof token !== "string" || token.length === 0) return null;
+  if (token.startsWith("notes_session=")) return token.split("=")[1] ?? null;
+  return token;
+}
+
+async function authenticate(input: { cookieHeader?: string; token?: unknown; workspaceId: string }): Promise<{ userId: string; displayName: string }> {
+  const sessionId = sessionIdFromCookie(input.cookieHeader) ?? sessionIdFromToken(input.token);
 
   if (!sessionId) throw new Error("Unauthorized");
 
@@ -30,7 +42,7 @@ async function authenticate(cookieHeader: string | undefined, workspaceId: strin
        join workspace_members wm on wm.user_id = u.id and wm.workspace_id = $2
       where s.id = $1 and s.expires_at > now()
       limit 1`,
-    [sessionId, workspaceId]
+    [sessionId, input.workspaceId]
   );
 
   const row = result.rows[0];
@@ -76,11 +88,11 @@ async function persistDocument(pageId: string, workspaceId: string, userId: stri
 
 const server = Server.configure({
   port: env.COLLAB_PORT,
-  async onAuthenticate({ documentName, requestHeaders }) {
+  async onAuthenticate({ documentName, requestHeaders, token }) {
     const match = roomSchema.exec(documentName);
     if (!match) throw new Error("Invalid room");
     const [, workspaceId] = match;
-    const user = await authenticate(requestHeaders.cookie, workspaceId);
+    const user = await authenticate({ cookieHeader: requestHeaders.cookie, token, workspaceId });
     return { user };
   },
   async onLoadDocument({ documentName }) {
