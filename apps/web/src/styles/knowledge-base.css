@@ -1,0 +1,173 @@
+.tree-row {
+  grid-template-columns: 24px minmax(0, 1fr) 28px 28px 28px 28px;
+  gap: 2px;
+}
+
+.tree-toggle {
+  width: 24px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #94a3b8;
+}
+
+.tree-toggle:hover:not(:disabled) {
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+.tree-toggle:disabled {
+  opacity: 0.32;
+}
+
+.tree-toggle-spacer {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+}
+
+.sidebar-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 6px;
+  min-height: 38px;
+  margin: 0 4px 10px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0b1220;
+  color: #94a3b8;
+  padding: 0 8px;
+}
+
+.sidebar-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #e5e7eb;
+}
+
+.sidebar-search button {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  color: #cbd5e1;
+}
+
+.sidebar-search button:hover {
+  background: #1e293b;
+}
+
+.sidebar-search-results {
+  display: grid;
+  gap: 6px;
+  padding: 0 4px 12px;
+}
+
+.sidebar-search-count {
+  margin: 0 0 2px;
+  padding: 0 4px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.sidebar-search-result {
+  display: grid;
+  gap: 3px;
+  border-radius: 8px;
+  background: #0b1220;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.sidebar-search-result:hover {
+  background: #1e293b;
+}
+
+.sidebar-search-result strong,
+.sidebar-search-result span,
+.sidebar-search-result small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-search-result strong {
+  color: #e5e7eb;
+}
+
+.sidebar-search-result span {
+  color: #93c5fd;
+  font-size: 12px;
+}
+
+.sidebar-search-result small {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.image-size-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+}
+
+.editor-toolbar .image-size-controls button {
+  width: 36px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.editor-surface img {
+  resize: horizontal;
+  overflow: auto;
+  min-width: 120px;
+}
+
+.editor-surface a[href^="data:application/pdf"],
+.editor-surface a[href*=".pdf"] {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #0b1220;
+  color: #bfdbfe;
+  padding: 8px 10px;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 760px) {
+  .tree-row {
+    grid-template-columns: 30px minmax(0, 1fr) 34px 34px 34px 34px;
+    min-height: 38px;
+  }
+
+  .tree-toggle {
+    width: 30px;
+    height: 34px;
+  }
+
+  .sidebar-search {
+    min-height: 42px;
+    margin-bottom: 12px;
+  }
+
+  .sidebar-search-result {
+    padding: 11px 10px;
+  }
+
+  .editor-toolbar .image-size-controls button {
+    width: 40px;
+  }
+}
