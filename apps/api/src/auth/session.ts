@@ -28,7 +28,19 @@ declare module "fastify" {
   }
 }
 
-export async function createSession(reply: FastifyReply, userId: string): Promise<void> {
+function authHeaderSessionId(request: FastifyRequest): string | null {
+  const header = request.headers.authorization;
+  if (!header) return null;
+  const [scheme, token] = header.split(" ");
+  if (scheme?.toLowerCase() !== "bearer" || !token) return null;
+  return token.trim() || null;
+}
+
+export function requestSessionId(request: FastifyRequest): string | null {
+  return authHeaderSessionId(request) ?? request.cookies[cookieName] ?? null;
+}
+
+export async function createSession(reply: FastifyReply, userId: string): Promise<{ id: string; expiresAt: Date }> {
   const id = sessionId();
   const expiresAt = new Date(Date.now() + sessionTtlMs);
   await db.insert(sessions).values({ id, userId, expiresAt });
@@ -37,10 +49,11 @@ export async function createSession(reply: FastifyReply, userId: string): Promis
     maxAge: Math.floor(sessionTtlMs / 1000),
     expires: expiresAt
   });
+  return { id, expiresAt };
 }
 
 export async function clearSession(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const id = request.cookies[cookieName];
+  const id = requestSessionId(request);
   if (id) {
     await db.delete(sessions).where(eq(sessions.id, id));
   }
@@ -48,7 +61,7 @@ export async function clearSession(request: FastifyRequest, reply: FastifyReply)
 }
 
 export async function requireAuth(request: FastifyRequest): Promise<AuthContext> {
-  const id = request.cookies[cookieName];
+  const id = requestSessionId(request);
   if (!id) {
     throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
   }
