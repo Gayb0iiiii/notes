@@ -24,7 +24,6 @@
     "@notes/shared": "workspace:*",
     "@tiptap/extension-code-block": "^2.10.4",
     "@tiptap/extension-collaboration": "^2.10.4",
-    "@tiptap/extension-collaboration-cursor": "^2.10.4",
     "@tiptap/extension-image": "^2.10.4",
     "@tiptap/extension-link": "^2.10.4",
     "@tiptap/extension-mention": "^2.10.4",
