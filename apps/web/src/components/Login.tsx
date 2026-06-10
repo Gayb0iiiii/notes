@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { getServerUrl, notesApi, setServerUrl } from "../lib/api";
-import { bootstrapOfflineDemo, isDemoLogin } from "../lib/demo";
+import { bootstrapOfflineDemo } from "../lib/demo";
+import { recordDiagnosticEvent } from "../lib/diagnostics";
 
 export function Login({ onLogin }: { onLogin: () => void }) {
   const [username, setUsername] = useState("owner");
@@ -18,23 +19,25 @@ export function Login({ onLogin }: { onLogin: () => void }) {
           if (busy) return;
           setBusy(true);
           setError(null);
-          setServerUrl(serverUrl);
           try {
+            setServerUrl(serverUrl);
             await notesApi.login(username.trim(), password);
+            recordDiagnosticEvent("info", "auth", "Login succeeded", { username: username.trim(), serverUrl });
             onLogin();
           } catch (loginError) {
-            if (isDemoLogin(username, password)) {
-              await bootstrapOfflineDemo();
-              onLogin();
-              return;
+            recordDiagnosticEvent("warn", "auth", "Login failed", loginError);
+            const message = loginError instanceof Error ? loginError.message : "Login failed";
+            if (message.includes("invalid_credentials") || message.includes("401")) {
+              setError("Login failed: wrong username or password.");
+            } else {
+              setError(`Login failed: ${message}`);
             }
-            setError(loginError instanceof Error ? `Login failed: ${loginError.message}` : "Login failed");
           } finally {
             setBusy(false);
           }
         }}
       >
-        <h1>Private Notes</h1>
+        <h1>Yeet Notes</h1>
         <label>
           Server URL
           <input
@@ -62,11 +65,17 @@ export function Login({ onLogin }: { onLogin: () => void }) {
           disabled={busy}
           onClick={async () => {
             setBusy(true);
-            await bootstrapOfflineDemo();
-            onLogin();
+            setError(null);
+            try {
+              await bootstrapOfflineDemo();
+              recordDiagnosticEvent("info", "auth", "Started offline demo");
+              onLogin();
+            } finally {
+              setBusy(false);
+            }
           }}
         >
-          Start offline
+          Start offline demo
         </button>
       </form>
     </main>
