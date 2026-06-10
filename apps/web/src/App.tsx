@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { PageDto } from "@notes/shared";
 import { Login } from "./components/Login";
 import { Sidebar } from "./components/Sidebar";
@@ -8,6 +8,7 @@ import { AdminPanel } from "./components/AdminPanel";
 import { LocalSettings } from "./components/LocalSettings";
 import { notesApi } from "./lib/api";
 import { bootstrapOfflineWorkspace } from "./lib/demo";
+import { recordDiagnosticEvent } from "./lib/diagnostics";
 import { localDb } from "./lib/localDb";
 import { cachePages, flushMetadataOutbox, pendingMetadataOperationCount } from "./lib/syncEngine";
 import { useAppStore } from "./store/appStore";
@@ -19,8 +20,14 @@ export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [activeView, setActiveView] = useState<"notes" | "admin">("notes");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const workspaceIdRef = useRef<string | null>(workspaceId);
+  const bootingRef = useRef(false);
   const visiblePages = useMemo(() => pages.filter((page) => !page.archivedAt && !page.deletedAt), [pages]);
   const activePage = useMemo(() => visiblePages.find((page) => page.id === activePageId) ?? visiblePages[0] ?? null, [activePageId, visiblePages]);
+
+  useEffect(() => {
+    workspaceIdRef.current = workspaceId;
+  }, [workspaceId]);
 
   async function loadLocalPages(id: string): Promise<PageDto[]> {
     const localPages = await localDb.localPages.where({ workspaceId: id }).toArray();
@@ -49,10 +56,11 @@ export function App() {
   }
 
   async function localWorkspaceId(): Promise<string | null> {
-    return workspaceId ?? (await localDb.localPages.orderBy("workspaceId").first())?.workspaceId ?? null;
+    return workspaceIdRef.current ?? (await localDb.localPages.orderBy("workspaceId").first())?.workspaceId ?? null;
   }
 
   async function openLocalWorkspace(id: string, status: "offline" | "sync_error" | "saving_locally") {
+    workspaceIdRef.current = id;
     setWorkspaceId(id);
     await loadLocalPages(id);
     setAuthenticated(true);
@@ -65,6 +73,7 @@ export function App() {
   }
 
   function resetToLogin() {
+    workspaceIdRef.current = null;
     setAuthenticated(false);
     setWorkspaceId(null);
     setPages([]);
@@ -75,20 +84,30 @@ export function App() {
   }
 
   async function boot() {
+    if (bootingRef.current) return;
+    bootingRef.current = true;
     const cachedWorkspaceId = await localWorkspaceId();
-    if (cachedWorkspaceId) {
-      await openLocalWorkspace(cachedWorkspaceId, navigator.onLine ? "sync_error" : "offline");
-    } else if (!navigator.onLine) {
-      await openLocalWorkspace(await bootstrapOfflineWorkspace(), "offline");
-      return;
-    }
 
     try {
+      if (cachedWorkspaceId) {
+        await openLocalWorkspace(cachedWorkspaceId, navigator.onLine ? "sync_error" : "offline");
+      } else if (!navigator.onLine) {
+        await openLocalWorkspace(await bootstrapOfflineWorkspace(), "offline");
+        return;
+      }
+
+      if (!navigator.onLine) return;
+      setSyncStatus("syncing");
+
       const workspaces = await notesApi.workspaces();
       const workspace = workspaces[0];
       if (!workspace) throw new Error("No workspace");
+      workspaceIdRef.current = workspace.id;
       setWorkspaceId(workspace.id);
+
       await loadLocalPages(workspace.id);
+      await flushMetadataOutbox(workspace.id);
+
       const remote = await notesApi.pages(workspace.id);
       await cachePages(workspace.id, remote.pages);
       setPages(remote.pages);
@@ -96,38 +115,59 @@ export function App() {
       if (!visibleRemotePages.some((page) => page.id === activePageId)) {
         setActivePageId((visibleRemotePages[0] ?? null)?.id ?? null);
       }
+
+      const queued = await pendingMetadataOperationCount(workspace.id);
       setAuthenticated(true);
-      setSyncStatus("synced");
-    } catch {
-      if (!cachedWorkspaceId) setAuthenticated(false);
+      setSyncStatus(queued > 0 ? "saving_locally" : "synced");
+      recordDiagnosticEvent("info", "sync", "Workspace boot completed", { workspaceId: workspace.id, queued });
+    } catch (error) {
+      recordDiagnosticEvent("error", "sync", "Workspace boot failed", error);
+      if (!cachedWorkspaceId) {
+        setAuthenticated(false);
+      } else {
+        setSyncStatus(navigator.onLine ? "sync_error" : "offline");
+      }
+    } finally {
+      bootingRef.current = false;
     }
   }
 
   useEffect(() => {
     void boot();
+
     const online = () => {
+      const id = workspaceIdRef.current;
       setSyncStatus("syncing");
-      if (workspaceId) void flushMetadataOutbox(workspaceId).finally(() => void boot());
+      if (id) void flushMetadataOutbox(id).finally(() => void boot());
+      else void boot();
     };
     const offline = () => setSyncStatus("offline");
     const refreshOutboxStatus = () => {
-      if (!workspaceId) return;
-      void pendingMetadataOperationCount(workspaceId).then((queued) => {
+      const id = workspaceIdRef.current;
+      if (!id) return;
+      void pendingMetadataOperationCount(id).then((queued) => {
         if (!navigator.onLine) setSyncStatus("offline");
         else if (queued > 0) setSyncStatus("saving_locally");
+        else setSyncStatus("synced");
       });
     };
+    const reloadAfterFlush = () => {
+      void boot();
+    };
+
     window.addEventListener("online", online);
     window.addEventListener("offline", offline);
     window.addEventListener("notes:offline-ready", refreshOutboxStatus);
     window.addEventListener("notes:outbox-changed", refreshOutboxStatus);
+    window.addEventListener("notes:metadata-flushed", reloadAfterFlush);
     return () => {
       window.removeEventListener("online", online);
       window.removeEventListener("offline", offline);
       window.removeEventListener("notes:offline-ready", refreshOutboxStatus);
       window.removeEventListener("notes:outbox-changed", refreshOutboxStatus);
+      window.removeEventListener("notes:metadata-flushed", reloadAfterFlush);
     };
-  }, [workspaceId]);
+  }, []);
 
   if (authenticated === null) return <main className="loading-screen">Loading local workspace...</main>;
   if (!authenticated) return <Login onLogin={() => void boot()} />;
