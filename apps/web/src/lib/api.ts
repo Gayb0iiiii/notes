@@ -1,4 +1,5 @@
 import type { MetadataOperation } from "@notes/shared";
+import { recordDiagnosticEvent } from "./diagnostics";
 
 const serverUrlKey = "notes.serverUrl";
 const nativeDefaultServerUrl = "https://notes.yeetserver.net";
@@ -12,18 +13,20 @@ export interface AdminUser {
   lastLoginAt: string | null;
 }
 
+function isNativeWebView(): boolean {
+  return window.location.protocol === "capacitor:" || window.location.protocol === "ionic:";
+}
+
 export function getServerUrl(): string {
   const stored = window.localStorage.getItem(serverUrlKey);
   if (stored) return stored;
-  if (window.location.protocol === "capacitor:" || window.location.protocol === "ionic:") {
-    return nativeDefaultServerUrl;
-  }
-  return "";
+  return isNativeWebView() ? nativeDefaultServerUrl : "";
 }
 
 export function setServerUrl(value: string): void {
   const normalized = value.trim().replace(/\/+$/, "");
   if (normalized) {
+    new URL(normalized);
     window.localStorage.setItem(serverUrlKey, normalized);
     return;
   }
@@ -43,20 +46,40 @@ export function collabUrl(): string {
   return `${protocol}//${source.host}/collab`;
 }
 
+function responseContentType(response: Response): string {
+  return response.headers.get("content-type") ?? "";
+}
+
+async function readResponse<T>(response: Response): Promise<T> {
+  if (response.status === 204) return undefined as T;
+  if (responseContentType(response).includes("application/json")) {
+    return response.json() as Promise<T>;
+  }
+  return response.text() as Promise<T>;
+}
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 3500);
+  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  const url = apiUrl(path);
+
   try {
-    const response = await fetch(apiUrl(path), {
+    const response = await fetch(url, {
       ...init,
       credentials: "include",
       headers: { "content-type": "application/json", ...(init.headers ?? {}) },
       signal: init.signal ?? controller.signal
     });
     if (!response.ok) {
-      throw new Error(`${response.status} ${await response.text()}`);
+      const body = await response.text();
+      const message = `${response.status} ${body || response.statusText}`;
+      recordDiagnosticEvent("warn", "api", message, { path, url, status: response.status, body });
+      throw new Error(message);
     }
-    return response.json() as Promise<T>;
+    return readResponse<T>(response);
+  } catch (error) {
+    recordDiagnosticEvent("error", "api", error instanceof Error ? error.message : "API request failed", { path, url, error });
+    throw error;
   } finally {
     window.clearTimeout(timeout);
   }
