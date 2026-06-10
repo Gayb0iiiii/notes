@@ -13,6 +13,44 @@ export interface AdminUser {
   lastLoginAt: string | null;
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly details: {
+      path: string;
+      url: string;
+      status?: number;
+      statusText?: string;
+      body?: string;
+      code?: string;
+      cause?: unknown;
+    }
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
+
+export function userFacingApiMessage(error: unknown): string {
+  if (!isApiError(error)) return error instanceof Error ? error.message : "Something went wrong.";
+
+  if (error.details.code === "invalid_credentials" || error.details.status === 401) {
+    return "Wrong username or password, or your session expired.";
+  }
+
+  if (error.details.status === 403) return "Your account does not have permission to do that.";
+  if (error.details.status === 404) return "The server route was not found. The server may not be updated.";
+  if (error.details.status && error.details.status >= 500) return "The server hit an internal error. Check the API logs.";
+  if (error.message === "request_timeout") return "The server did not respond in time.";
+  if (error.message === "network_error") return "The app could not reach the server. Check the URL, HTTPS, Cloudflare tunnel, and server status.";
+
+  return error.message;
+}
+
 function isNativeWebView(): boolean {
   return window.location.protocol === "capacitor:" || window.location.protocol === "ionic:";
 }
@@ -26,7 +64,8 @@ export function getServerUrl(): string {
 export function setServerUrl(value: string): void {
   const normalized = value.trim().replace(/\/+$/, "");
   if (normalized) {
-    new URL(normalized);
+    const parsed = new URL(normalized);
+    if (!parsed.protocol.startsWith("http")) throw new Error("Server URL must start with http:// or https://");
     window.localStorage.setItem(serverUrlKey, normalized);
     return;
   }
@@ -50,6 +89,17 @@ function responseContentType(response: Response): string {
   return response.headers.get("content-type") ?? "";
 }
 
+function parseErrorCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; code?: unknown };
+    if (typeof parsed.error === "string") return parsed.error;
+    if (typeof parsed.code === "string") return parsed.code;
+  } catch {
+    // Body was not JSON.
+  }
+  return undefined;
+}
+
 async function readResponse<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
   if (responseContentType(response).includes("application/json")) {
@@ -60,7 +110,7 @@ async function readResponse<T>(response: Response): Promise<T> {
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 12000);
+  const timeout = window.setTimeout(() => controller.abort("request_timeout"), 12000);
   const url = apiUrl(path);
 
   try {
@@ -72,14 +122,28 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     });
     if (!response.ok) {
       const body = await response.text();
-      const message = `${response.status} ${body || response.statusText}`;
-      recordDiagnosticEvent("warn", "api", message, { path, url, status: response.status, body });
-      throw new Error(message);
+      const error = new ApiError(`${response.status} ${body || response.statusText}`, {
+        path,
+        url,
+        status: response.status,
+        statusText: response.statusText,
+        body,
+        code: parseErrorCode(body)
+      });
+      recordDiagnosticEvent("warn", "api", error.message, error.details);
+      throw error;
     }
     return readResponse<T>(response);
   } catch (error) {
-    recordDiagnosticEvent("error", "api", error instanceof Error ? error.message : "API request failed", { path, url, error });
-    throw error;
+    if (isApiError(error)) {
+      recordDiagnosticEvent("error", "api", error.message, { ...error.details, error });
+      throw error;
+    }
+
+    const message = error instanceof DOMException && error.name === "AbortError" ? "request_timeout" : "network_error";
+    const apiError = new ApiError(message, { path, url, cause: error });
+    recordDiagnosticEvent("error", "api", apiError.message, { ...apiError.details, error });
+    throw apiError;
   } finally {
     window.clearTimeout(timeout);
   }
