@@ -49,18 +49,22 @@ function safeMessage(value: unknown): string {
   }
 }
 
-function compactData(value: unknown): unknown {
+function compactData(value: unknown, depth = 0): unknown {
   if (value == null) return value;
   if (value instanceof Error) return { name: value.name, message: value.message, stack: value.stack };
+  if (typeof value === "string") return value.length > 600 ? `${value.slice(0, 600)}…` : value;
   if (typeof value !== "object") return value;
-  try {
-    return JSON.parse(JSON.stringify(value, (_key, item) => {
-      if (typeof item === "string" && item.length > 600) return `${item.slice(0, 600)}…`;
-      return item;
-    }));
-  } catch {
-    return safeMessage(value);
+  if (depth > 4) return safeMessage(value);
+
+  if (Array.isArray(value)) {
+    return value.slice(0, 40).map((item) => compactData(item, depth + 1));
   }
+
+  const output: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    output[key] = compactData(item, depth + 1);
+  }
+  return output;
 }
 
 export function recordDiagnosticEvent(level: DiagnosticLevel, area: string, message: string, data?: unknown): void {
