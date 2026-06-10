@@ -1,0 +1,73 @@
+name: Deploy server
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: notes-server-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy Yeet Notes server
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        run: |
+          set -eu
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.YEETSERVER_SSH_KEY }}" > ~/.ssh/yeetserver_deploy
+          chmod 600 ~/.ssh/yeetserver_deploy
+          ssh-keyscan -H "${{ secrets.YEETSERVER_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        run: |
+          set -eu
+          ssh -i ~/.ssh/yeetserver_deploy \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "${{ secrets.YEETSERVER_USER }}@${{ secrets.YEETSERVER_HOST }}" \
+            'bash -se' <<'REMOTE_DEPLOY'
+          set -euo pipefail
+
+          cd /etc/komodo/stacks/notes
+
+          echo "==> Updating repository"
+          git fetch origin main
+          git reset --hard origin/main
+          git clean -fd
+
+          echo "==> Validating compose config"
+          docker compose -p notes -f docker-compose.prod.yml --env-file .env config >/dev/null
+
+          echo "==> Building changed images"
+          docker compose -p notes -f docker-compose.prod.yml --env-file .env build api collab app-web caddy
+
+          echo "==> Recreating runtime services"
+          docker compose -p notes -f docker-compose.prod.yml --env-file .env up -d --force-recreate api collab app-web caddy
+
+          echo "==> Waiting for API health"
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:18081/health >/dev/null; then
+              echo "API healthy"
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "API did not become healthy"
+              docker compose -p notes -f docker-compose.prod.yml --env-file .env logs --tail=160 api caddy collab
+              exit 1
+            fi
+            sleep 2
+          done
+
+          echo "==> Current services"
+          docker compose -p notes -f docker-compose.prod.yml --env-file .env ps
+          REMOTE_DEPLOY
