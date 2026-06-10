@@ -1,0 +1,164 @@
+.admin-users-section {
+  min-width: 0;
+}
+
+.admin-user-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-user-card {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  border: 1px solid #273246;
+  border-radius: 10px;
+  background: #0b1220;
+  padding: 14px;
+}
+
+.admin-user-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-user-card-header strong {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.admin-user-card-header .admin-muted {
+  margin-top: 3px;
+}
+
+.admin-user-fields {
+  gap: 10px;
+}
+
+.admin-remove-user {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #7f1d1d;
+  border-radius: 8px;
+  background: #2a1015;
+  color: #fca5a5;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.admin-user-card input,
+.admin-user-card select,
+.admin-form input,
+.admin-form select {
+  min-height: 42px;
+}
+
+.admin-user-card .password-reset {
+  grid-template-columns: minmax(0, 1fr) 42px;
+}
+
+.admin-user-card .password-reset button {
+  width: 42px;
+  min-height: 42px;
+}
+
+@media (max-width: 760px) {
+  .admin-panel {
+    width: 100%;
+    overflow-x: hidden;
+    padding: 16px calc(12px + var(--safe-area-right)) calc(96px + var(--safe-area-bottom)) calc(12px + var(--safe-area-left));
+  }
+
+  .admin-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .admin-header h2 {
+    font-size: 22px;
+    line-height: 1.15;
+  }
+
+  .admin-refresh,
+  .admin-form button[type="submit"] {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+    border-radius: 9px;
+  }
+
+  .admin-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  .admin-section {
+    min-width: 0;
+    border-radius: 12px;
+    padding: 14px;
+  }
+
+  .admin-section-title {
+    margin-bottom: 12px;
+  }
+
+  .admin-user-list {
+    gap: 10px;
+  }
+
+  .admin-user-card {
+    padding: 12px;
+  }
+
+  .admin-user-card-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .admin-remove-user {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .backup-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .backup-options code {
+    max-width: 100%;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .topbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .topbar-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  .topbar-actions .sync-status {
+    grid-column: 1 / -1;
+    justify-content: center;
+    min-height: 34px;
+  }
+
+  .view-toggle {
+    justify-content: center;
+    min-height: 38px;
+  }
+}
