@@ -12,7 +12,12 @@ export const backlinkRoutes: FastifyPluginAsync = async (app) => {
     await requireAuth(request);
     const params = z.object({ pageId: z.string().uuid() }).parse(request.params);
     const [page] = await db.select().from(pages).where(eq(pages.id, params.pageId)).limit(1);
-    if (!page) throw Object.assign(new Error("Not found"), { statusCode: 404 });
+
+    if (!page) {
+      request.log.info({ pageId: params.pageId }, "Backlink lookup skipped for page that is not on the server yet");
+      return { backlinks: [] };
+    }
+
     await requireWorkspaceRole(request, page.workspaceId);
     const rows = await db
       .select({ page: pages })
@@ -27,7 +32,10 @@ export const backlinkRoutes: FastifyPluginAsync = async (app) => {
     const params = z.object({ pageId: z.string().uuid() }).parse(request.params);
     const body = z.object({ targetPageIds: z.array(z.string().uuid()) }).parse(request.body);
     const [page] = await db.select().from(pages).where(eq(pages.id, params.pageId)).limit(1);
-    if (!page) throw Object.assign(new Error("Not found"), { statusCode: 404 });
+    if (!page) {
+      request.log.info({ pageId: params.pageId }, "Link reindex skipped for page that is not on the server yet");
+      return { ok: true, linkCount: 0, skipped: "page_not_synced" };
+    }
     await requireWorkspaceRole(request, page.workspaceId);
     await db.delete(pageLinks).where(eq(pageLinks.sourcePageId, params.pageId));
     const links = mergePageLinks(params.pageId, body.targetPageIds);
