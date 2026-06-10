@@ -5,6 +5,7 @@ import { installDiagnostics } from "./lib/diagnostics";
 import { registerServiceWorker } from "./lib/registerServiceWorker";
 import "./styles/app.css";
 import "./styles/settings.css";
+import "./styles/admin-mobile.css";
 import "./styles/native-safe-area.css";
 
 installDiagnostics();
