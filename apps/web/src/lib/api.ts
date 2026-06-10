@@ -1,8 +1,10 @@
+import { Capacitor, CapacitorHttp } from "@capacitor/core";
 import type { MetadataOperation } from "@notes/shared";
 import { recordDiagnosticEvent } from "./diagnostics";
 
 const serverUrlKey = "notes.serverUrl";
 const nativeDefaultServerUrl = "https://notes.yeetserver.net";
+const nativeCookieKey = "notes.nativeCookie";
 
 export interface AdminUser {
   id: string;
@@ -38,10 +40,8 @@ export function isApiError(error: unknown): error is ApiError {
 export function userFacingApiMessage(error: unknown): string {
   if (!isApiError(error)) return error instanceof Error ? error.message : "Something went wrong.";
 
-  if (error.details.code === "invalid_credentials" || error.details.status === 401) {
-    return "Wrong username or password, or your session expired.";
-  }
-
+  if (error.details.code === "invalid_credentials") return "Wrong username or password.";
+  if (error.details.status === 401) return "You are not signed in. Sign in again.";
   if (error.details.status === 403) return "Your account does not have permission to do that.";
   if (error.details.status === 404) return "The server route was not found. The server may not be updated.";
   if (error.details.status && error.details.status >= 500) return "The server hit an internal error. Check the API logs.";
@@ -52,7 +52,11 @@ export function userFacingApiMessage(error: unknown): string {
 }
 
 function isNativeWebView(): boolean {
-  return window.location.protocol === "capacitor:" || window.location.protocol === "ionic:";
+  return Capacitor.isNativePlatform() || window.location.protocol === "capacitor:" || window.location.protocol === "ionic:";
+}
+
+function shouldUseNativeHttp(): boolean {
+  return Capacitor.isNativePlatform() && Boolean(getServerUrl());
 }
 
 export function getServerUrl(): string {
@@ -108,7 +112,109 @@ async function readResponse<T>(response: Response): Promise<T> {
   return response.text() as Promise<T>;
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+function headersToObject(headers: HeadersInit | undefined): Record<string, string> {
+  const output: Record<string, string> = {};
+  if (!headers) return output;
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => {
+      output[key] = value;
+    });
+    return output;
+  }
+  if (Array.isArray(headers)) {
+    for (const [key, value] of headers) output[key] = value;
+    return output;
+  }
+  return { ...headers };
+}
+
+function nativeBody(init: RequestInit): unknown {
+  if (typeof init.body !== "string") return init.body ?? undefined;
+  try {
+    return JSON.parse(init.body);
+  } catch {
+    return init.body;
+  }
+}
+
+function bodyToText(data: unknown): string {
+  if (typeof data === "string") return data;
+  if (data == null) return "";
+  try {
+    return JSON.stringify(data);
+  } catch {
+    return String(data);
+  }
+}
+
+function readStoredCookie(): string | null {
+  return window.localStorage.getItem(nativeCookieKey);
+}
+
+function writeStoredCookie(cookie: string): void {
+  window.localStorage.setItem(nativeCookieKey, cookie);
+}
+
+export function clearStoredSession(): void {
+  window.localStorage.removeItem(nativeCookieKey);
+}
+
+function rememberCookie(headers: Record<string, string | string[]>): void {
+  const raw = headers["set-cookie"] ?? headers["Set-Cookie"];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value) return;
+  const cookie = value.split(";")[0]?.trim();
+  if (cookie?.startsWith("notes_session=")) {
+    writeStoredCookie(cookie);
+    recordDiagnosticEvent("info", "auth", "Stored native session cookie");
+  }
+}
+
+async function nativeApi<T>(path: string, init: RequestInit): Promise<T> {
+  const url = apiUrl(path);
+  const headers = { "content-type": "application/json", ...headersToObject(init.headers) };
+  const storedCookie = readStoredCookie();
+  if (storedCookie) headers.cookie = storedCookie;
+
+  try {
+    const response = await CapacitorHttp.request({
+      method: (init.method ?? "GET").toUpperCase(),
+      url,
+      headers,
+      data: nativeBody(init),
+      connectTimeout: 12000,
+      readTimeout: 12000
+    });
+
+    rememberCookie(response.headers ?? {});
+    const body = bodyToText(response.data);
+
+    if (response.status < 200 || response.status >= 300) {
+      const error = new ApiError(`${response.status} ${body}`, {
+        path,
+        url,
+        status: response.status,
+        body,
+        code: parseErrorCode(body)
+      });
+      recordDiagnosticEvent("warn", "api", error.message, error.details);
+      throw error;
+    }
+
+    if (response.status === 204 || body === "") return undefined as T;
+    return (typeof response.data === "string" ? JSON.parse(response.data) : response.data) as T;
+  } catch (error) {
+    if (isApiError(error)) {
+      recordDiagnosticEvent("error", "api", error.message, { ...error.details, error });
+      throw error;
+    }
+    const apiError = new ApiError("network_error", { path, url, cause: error });
+    recordDiagnosticEvent("error", "api", apiError.message, { ...apiError.details, error });
+    throw apiError;
+  }
+}
+
+async function webApi<T>(path: string, init: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort("request_timeout"), 12000);
   const url = apiUrl(path);
@@ -149,10 +255,20 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 }
 
+export function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  return shouldUseNativeHttp() ? nativeApi<T>(path, init) : webApi<T>(path, init);
+}
+
 export const notesApi = {
   me: () => api<{ user: { userId: string; displayName: string }; memberships: Array<{ workspaceId: string; role: string }> }>("/api/auth/me"),
   login: (username: string, password: string) => api<{ user: unknown }>("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) }),
-  logout: () => api<{ ok: true }>("/api/auth/logout", { method: "POST" }),
+  logout: async () => {
+    try {
+      return await api<{ ok: true }>("/api/auth/logout", { method: "POST" });
+    } finally {
+      clearStoredSession();
+    }
+  },
   users: () => api<AdminUser[]>("/api/users"),
   createUser: (input: { workspaceId: string; username: string; password: string; displayName: string; role: "owner" | "editor" }) =>
     api<{ user: AdminUser }>("/api/users", { method: "POST", body: JSON.stringify(input) }),
