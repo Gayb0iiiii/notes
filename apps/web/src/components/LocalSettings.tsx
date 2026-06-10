@@ -1,6 +1,6 @@
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { apiUrl, getServerUrl, notesApi, setServerUrl } from "../lib/api";
+import { api, clearStoredSession, getServerUrl, notesApi, setServerUrl, userFacingApiMessage } from "../lib/api";
 import { buildDiagnosticReport, clearDiagnosticEvents, getDiagnosticEvents, recordDiagnosticEvent } from "../lib/diagnostics";
 import { localDb } from "../lib/localDb";
 
@@ -50,8 +50,9 @@ export function LocalSettings({ open, onClose, onRequireLogin }: LocalSettingsPr
   if (!open) return null;
 
   function closeToLogin() {
-    onClose();
+    clearStoredSession();
     onRequireLogin();
+    onClose();
   }
 
   function saveServer(event: FormEvent<HTMLFormElement>) {
@@ -59,7 +60,8 @@ export function LocalSettings({ open, onClose, onRequireLogin }: LocalSettingsPr
     setError(null);
     try {
       setServerUrl(serverUrl);
-      recordDiagnosticEvent("info", "settings", "Server URL saved", { serverUrl });
+      clearStoredSession();
+      recordDiagnosticEvent("info", "settings", "Server URL saved and local session cleared", { serverUrl });
       closeToLogin();
     } catch {
       setError("Server URL is invalid. Use a full URL like https://notes.yeetserver.net");
@@ -69,24 +71,23 @@ export function LocalSettings({ open, onClose, onRequireLogin }: LocalSettingsPr
   async function testConnection() {
     setBusy(true);
     setError(null);
-    setStatus("Testing server...");
+    setStatus("Testing server health...");
     try {
-      const healthResponse = await fetch(apiUrl("/health"), { credentials: "include" });
-      const healthBody = await healthResponse.text();
-      if (!healthResponse.ok) throw new Error(`Health check failed: ${healthResponse.status} ${healthBody}`);
+      await api<{ ok: true }>("/health");
 
+      setStatus("Server reachable. Checking login session...");
       try {
         await notesApi.me();
         setStatus("Server reachable and session is valid.");
         recordDiagnosticEvent("info", "settings", "Server test passed with valid session");
       } catch (authError) {
-        setStatus("Server reachable. Login/session is not valid yet.");
+        setStatus("Server reachable. You are not signed in on this device.");
         recordDiagnosticEvent("warn", "settings", "Server reachable but auth check failed", authError);
       }
     } catch (connectionError) {
-      const message = connectionError instanceof Error ? connectionError.message : "Connection test failed";
+      const message = userFacingApiMessage(connectionError);
       setError(message);
-      setStatus(null);
+      setStatus("Server test failed.");
       recordDiagnosticEvent("error", "settings", "Server test failed", connectionError);
     } finally {
       setBusy(false);
@@ -111,9 +112,12 @@ export function LocalSettings({ open, onClose, onRequireLogin }: LocalSettingsPr
   async function logout() {
     setBusy(true);
     setError(null);
+    setStatus("Logging out on this device...");
     try {
       await notesApi.logout();
+      recordDiagnosticEvent("info", "settings", "Logged out on this device");
     } catch (logoutError) {
+      clearStoredSession();
       recordDiagnosticEvent("warn", "settings", "Server logout failed; local logout continued", logoutError);
     } finally {
       setBusy(false);
@@ -130,6 +134,7 @@ export function LocalSettings({ open, onClose, onRequireLogin }: LocalSettingsPr
     setBusy(true);
     setError(null);
     try {
+      clearStoredSession();
       await localDb.delete();
       await localDb.open();
       clearDiagnosticEvents();
@@ -143,8 +148,8 @@ export function LocalSettings({ open, onClose, onRequireLogin }: LocalSettingsPr
   }
 
   return (
-    <div className="settings-backdrop" role="presentation" onMouseDown={onClose}>
-      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="local-settings-title" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="settings-backdrop" role="presentation" onClick={onClose}>
+      <section className="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="local-settings-title" onClick={(event) => event.stopPropagation()}>
         <div className="settings-header">
           <div>
             <p className="settings-eyebrow">Local app settings</p>
