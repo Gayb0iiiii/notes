@@ -125,6 +125,86 @@ export const sessions = pgTable("sessions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
 
+export const importJobs = pgTable(
+  "import_jobs",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    workspaceId: uuid("workspace_id").notNull().references(() => workspaces.id),
+    uploadedBy: uuid("uploaded_by").notNull().references(() => users.id),
+    status: text("status", {
+      enum: [
+        "uploaded",
+        "extracting",
+        "scanning",
+        "preview_ready",
+        "importing_metadata",
+        "uploading_assets",
+        "importing_documents",
+        "reindexing_links",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    }).notNull().default("uploaded"),
+    sourceType: text("source_type").notNull().default("notion_export"),
+    originalFilename: text("original_filename"),
+    tempStoragePath: text("temp_storage_path"),
+    fileCount: integer("file_count").notNull().default(0),
+    pageCount: integer("page_count").notNull().default(0),
+    assetCount: integer("asset_count").notNull().default(0),
+    databaseCount: integer("database_count").notNull().default(0),
+    unsupportedCount: integer("unsupported_count").notNull().default(0),
+    totalSizeBytes: bigint("total_size_bytes", { mode: "number" }).notNull().default(0),
+    errorCount: integer("error_count").notNull().default(0),
+    previewJson: text("preview_json"),
+    ...timestamps
+  },
+  (table) => ({ workspaceIdx: index("import_jobs_workspace_idx").on(table.workspaceId) })
+);
+
+export const importPages = pgTable(
+  "import_pages",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    importJobId: uuid("import_job_id").notNull().references(() => importJobs.id, { onDelete: "cascade" }),
+    sourcePath: text("source_path").notNull(),
+    sourceIdGuess: text("source_id_guess").notNull(),
+    title: text("title").notNull(),
+    parentSourcePath: text("parent_source_path"),
+    htmlPath: text("html_path"),
+    markdownPath: text("markdown_path"),
+    csvPath: text("csv_path"),
+    assetPaths: text("asset_paths").notNull().default("[]"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({ jobPathUnique: unique().on(table.importJobId, table.sourcePath) })
+);
+
+export const importAssets = pgTable(
+  "import_assets",
+  {
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+    importJobId: uuid("import_job_id").notNull().references(() => importJobs.id, { onDelete: "cascade" }),
+    sourcePath: text("source_path").notNull(),
+    originalFilename: text("original_filename"),
+    mimeType: text("mime_type"),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull().default(0),
+    kind: text("kind", { enum: ["html", "markdown", "csv", "image", "pdf", "file", "unknown"] }).notNull().default("unknown"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => ({ jobPathUnique: unique().on(table.importJobId, table.sourcePath) })
+);
+
+export const importErrors = pgTable("import_errors", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  importJobId: uuid("import_job_id").notNull().references(() => importJobs.id, { onDelete: "cascade" }),
+  sourcePath: text("source_path"),
+  severity: text("severity", { enum: ["warning", "error"] }).notNull(),
+  code: text("code").notNull(),
+  message: text("message").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+});
+
 export const userRelations = relations(users, ({ many }) => ({
   memberships: many(workspaceMembers)
 }));

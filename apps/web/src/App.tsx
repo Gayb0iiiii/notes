@@ -19,6 +19,7 @@ export function App() {
   const { workspaceId, pages, activePageId, syncStatus, sidebarOpen, setWorkspaceId, setPages, setActivePageId, setSyncStatus, setSidebarOpen } = useAppStore();
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [activeView, setActiveView] = useState<"notes" | "admin">("notes");
+  const [workspaceRole, setWorkspaceRole] = useState<"owner" | "editor" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const workspaceIdRef = useRef<string | null>(workspaceId);
   const bootingRef = useRef(false);
@@ -80,6 +81,7 @@ export function App() {
     setActivePageId(null);
     setSyncStatus(navigator.onLine ? "synced" : "offline");
     setActiveView("notes");
+    setWorkspaceRole(null);
     setSidebarOpen(false);
   }
 
@@ -104,6 +106,7 @@ export function App() {
       if (!workspace) throw new Error("No workspace");
       workspaceIdRef.current = workspace.id;
       setWorkspaceId(workspace.id);
+      setWorkspaceRole(workspace.role === "owner" ? "owner" : "editor");
 
       await loadLocalPages(workspace.id);
       await flushMetadataOutbox(workspace.id);
@@ -169,6 +172,12 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (activeView === "admin" && workspaceRole !== "owner") {
+      setActiveView("notes");
+    }
+  }, [activeView, workspaceRole]);
+
   if (authenticated === null) return <main className="loading-screen">Loading local workspace...</main>;
   if (!authenticated) return <Login onLogin={() => void boot()} />;
   if (!workspaceId) return <main className="loading-screen">No workspace available</main>;
@@ -193,16 +202,18 @@ export function App() {
             <h1>{activeView === "admin" ? "Admin" : activePage?.title ?? "Untitled"}</h1>
           </div>
           <div className="topbar-actions">
-            <button className="view-toggle" type="button" onClick={() => setActiveView(activeView === "admin" ? "notes" : "admin")}>
-              {activeView === "admin" ? "Notes" : "Admin"}
-            </button>
+            {workspaceRole === "owner" ? (
+              <button className="view-toggle" type="button" onClick={() => setActiveView(activeView === "admin" ? "notes" : "admin")}>
+                {activeView === "admin" ? "Notes" : "Admin"}
+              </button>
+            ) : null}
             <button className="view-toggle" type="button" onClick={() => setSettingsOpen(true)}>
               Settings
             </button>
             <SyncStatus status={syncStatus} />
           </div>
         </header>
-        {activeView === "admin" ? (
+        {activeView === "admin" && workspaceRole === "owner" ? (
           <AdminPanel workspaceId={workspaceId} />
         ) : activePage ? (
           <>

@@ -1,5 +1,5 @@
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
-import type { MetadataOperation } from "@notes/shared";
+import type { MetadataOperation, NotionImportPreview } from "@notes/shared";
 import { recordDiagnosticEvent } from "./diagnostics";
 
 const serverUrlKey = "notes.serverUrl";
@@ -57,6 +57,10 @@ function isNativeWebView(): boolean {
 
 function shouldUseNativeHttp(): boolean {
   return Capacitor.isNativePlatform() && Boolean(getServerUrl());
+}
+
+function isFormDataBody(body: BodyInit | null | undefined): body is FormData {
+  return typeof FormData !== "undefined" && body instanceof FormData;
 }
 
 export function getServerUrl(): string {
@@ -218,16 +222,17 @@ async function nativeApi<T>(path: string, init: RequestInit): Promise<T> {
   }
 }
 
-async function webApi<T>(path: string, init: RequestInit): Promise<T> {
+async function webApi<T>(path: string, init: RequestInit, timeoutMs = 12000): Promise<T> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort("request_timeout"), 12000);
+  const timeout = window.setTimeout(() => controller.abort("request_timeout"), timeoutMs);
   const url = apiUrl(path);
+  const isFormData = isFormDataBody(init.body);
 
   try {
     const response = await fetch(url, {
       ...init,
       credentials: "include",
-      headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+      headers: isFormData ? init.headers : { "content-type": "application/json", ...(init.headers ?? {}) },
       signal: init.signal ?? controller.signal
     });
     if (!response.ok) {
@@ -259,8 +264,9 @@ async function webApi<T>(path: string, init: RequestInit): Promise<T> {
   }
 }
 
-export function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  return shouldUseNativeHttp() ? nativeApi<T>(path, init) : webApi<T>(path, init);
+export function api<T>(path: string, init: RequestInit = {}, timeoutMs = 12000): Promise<T> {
+  if (isFormDataBody(init.body)) return webApi<T>(path, init, timeoutMs);
+  return shouldUseNativeHttp() ? nativeApi<T>(path, init) : webApi<T>(path, init, timeoutMs);
 }
 
 export const notesApi = {
@@ -288,5 +294,12 @@ export const notesApi = {
   completeAsset: (assetId: string) => api<{ asset: unknown }>("/api/assets/complete", { method: "POST", body: JSON.stringify({ assetId }) }),
   asset: (assetId: string) => api<{ asset: unknown; url: string }>(`/api/assets/${assetId}`),
   backlinks: (pageId: string) => api<{ backlinks: import("@notes/shared").PageDto[] }>(`/api/pages/${pageId}/backlinks`),
-  reindexLinks: (pageId: string, targetPageIds: string[]) => api<{ ok: true }>(`/api/pages/${pageId}/reindex-links`, { method: "POST", body: JSON.stringify({ targetPageIds }) })
+  reindexLinks: (pageId: string, targetPageIds: string[]) => api<{ ok: true }>(`/api/pages/${pageId}/reindex-links`, { method: "POST", body: JSON.stringify({ targetPageIds }) }),
+  uploadNotionImport: (workspaceId: string, file: File) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    return api<{ preview: NotionImportPreview }>(`/api/imports/notion/upload?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "POST", body: formData }, 120_000);
+  },
+  notionImportPreview: (importId: string) => api<{ preview: NotionImportPreview }>(`/api/imports/${importId}/preview`, {}, 15_000),
+  cancelNotionImport: (importId: string) => api<{ preview: NotionImportPreview }>(`/api/imports/${importId}/cancel`, { method: "POST" }, 15_000)
 };

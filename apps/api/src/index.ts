@@ -11,6 +11,7 @@ import { pageRoutes } from "./routes/pages";
 import { syncRoutes } from "./routes/sync";
 import { assetRoutes } from "./routes/assets";
 import { backlinkRoutes } from "./routes/backlinks";
+import { importRoutes } from "./routes/imports";
 
 const app = Fastify({ logger: true });
 const nativeOrigins = config.NATIVE_APP_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean);
@@ -45,5 +46,6 @@ await app.register(pageRoutes, { prefix: "/api" });
 await app.register(syncRoutes, { prefix: "/api/sync" });
 await app.register(assetRoutes, { prefix: "/api/assets" });
 await app.register(backlinkRoutes, { prefix: "/api/pages" });
+await app.register(importRoutes, { prefix: "/api/imports" });
 
 await app.listen({ host: "0.0.0.0", port: config.PORT });

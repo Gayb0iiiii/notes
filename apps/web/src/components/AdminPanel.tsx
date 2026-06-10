@@ -1,10 +1,14 @@
 import Cloud from "lucide-react/dist/esm/icons/cloud.js";
 import DatabaseBackup from "lucide-react/dist/esm/icons/database-backup.js";
+import FileArchive from "lucide-react/dist/esm/icons/file-archive.js";
 import KeyRound from "lucide-react/dist/esm/icons/key-round.js";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.js";
 import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.js";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.js";
+import Upload from "lucide-react/dist/esm/icons/upload.js";
 import UserPlus from "lucide-react/dist/esm/icons/user-plus.js";
+import XCircle from "lucide-react/dist/esm/icons/x-circle.js";
+import type { NotionImportPreview } from "@notes/shared";
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import type { AdminUser } from "../lib/api";
@@ -25,10 +29,21 @@ function formatLastLogin(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "Never";
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
 export function AdminPanel({ workspaceId }: AdminPanelProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [form, setForm] = useState(initialForm);
   const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<NotionImportPreview | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -106,12 +121,41 @@ export function AdminPanel({ workspaceId }: AdminPanelProps) {
     }
   }
 
+  async function uploadImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!importFile) return;
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const result = await notesApi.uploadNotionImport(workspaceId, importFile);
+      setImportPreview(result.preview);
+    } catch {
+      setImportError("Could not scan that Notion export. Use the HTML export zip with subpages and files included.");
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function cancelImport() {
+    if (!importPreview) return;
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const result = await notesApi.cancelNotionImport(importPreview.importId);
+      setImportPreview(result.preview);
+    } catch {
+      setImportError("Could not cancel this import job.");
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
   return (
     <section className="admin-panel">
       <div className="admin-header">
         <div>
           <span className="breadcrumb">Workspace Admin</span>
-          <h2>Users and Backups</h2>
+          <h2>Users, Imports, and Backups</h2>
         </div>
         <button className="admin-refresh" type="button" onClick={() => void loadUsers()} disabled={loading}>
           <RefreshCw size={16} />
@@ -238,6 +282,60 @@ export function AdminPanel({ workspaceId }: AdminPanelProps) {
               Add user
             </button>
           </form>
+        </section>
+
+        <section className="admin-section import-section">
+          <div className="admin-section-title">
+            <FileArchive size={18} />
+            <h3>Notion Import</h3>
+          </div>
+          <form className="admin-form import-form" onSubmit={(event) => void uploadImport(event)}>
+            <label>
+              HTML export zip
+              <input type="file" accept=".zip,application/zip" onChange={(event) => setImportFile(event.target.files?.[0] ?? null)} />
+            </label>
+            <button type="submit" disabled={importBusy || !importFile}>
+              <Upload size={16} />
+              {importBusy ? "Scanning..." : "Scan export"}
+            </button>
+          </form>
+          <p className="admin-muted">This only creates a safe preview. It does not create pages or import content yet.</p>
+          {importError ? <p className="admin-error">{importError}</p> : null}
+          {importPreview ? (
+            <div className="import-preview">
+              <div className="import-status-row">
+                <strong>{importPreview.originalFilename ?? "Notion export"}</strong>
+                <span data-status={importPreview.status}>{importPreview.status.replace(/_/g, " ")}</span>
+              </div>
+              <div className="import-counts">
+                <span><strong>{importPreview.counts.pageCount}</strong> pages</span>
+                <span><strong>{importPreview.counts.assetCount}</strong> assets</span>
+                <span><strong>{importPreview.counts.databaseCount}</strong> CSV databases</span>
+                <span><strong>{formatBytes(importPreview.counts.totalSizeBytes)}</strong> extracted</span>
+              </div>
+              {importPreview.issues.length > 0 ? (
+                <ul className="import-issues">
+                  {importPreview.issues.slice(0, 4).map((issue) => (
+                    <li key={`${issue.code}:${issue.sourcePath ?? "job"}`} data-severity={issue.severity}>{issue.message}</li>
+                  ))}
+                </ul>
+              ) : null}
+              {importPreview.pages.length > 0 ? (
+                <div className="import-sample">
+                  <strong>Page preview</strong>
+                  {importPreview.pages.slice(0, 8).map((page) => (
+                    <span key={page.sourcePath}>{page.title}</span>
+                  ))}
+                </div>
+              ) : null}
+              {importPreview.status !== "cancelled" ? (
+                <button className="admin-secondary" type="button" onClick={() => void cancelImport()} disabled={importBusy}>
+                  <XCircle size={16} />
+                  Cancel job
+                </button>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         <section className="admin-section backup-section">

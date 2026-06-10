@@ -367,6 +367,108 @@ button:disabled {
   color: #ffffff;
 }
 
+.import-section,
+.backup-section {
+  grid-column: 1 / -1;
+}
+
+.import-form {
+  max-width: 520px;
+  margin-bottom: 12px;
+}
+
+.import-preview {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  border: 1px solid #273246;
+  border-radius: 8px;
+  background: #0b1220;
+  padding: 12px;
+}
+
+.import-status-row,
+.import-counts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.import-status-row {
+  justify-content: space-between;
+}
+
+.import-status-row span {
+  border: 1px solid #334155;
+  border-radius: 999px;
+  background: #111827;
+  color: #cbd5e1;
+  padding: 4px 9px;
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.import-status-row span[data-status="failed"] {
+  border-color: #7f1d1d;
+  background: #2a1015;
+  color: #fca5a5;
+}
+
+.import-counts span {
+  border-radius: 6px;
+  background: #111827;
+  color: #cbd5e1;
+  padding: 8px 10px;
+}
+
+.import-issues {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-issues li {
+  border: 1px solid #334155;
+  border-radius: 6px;
+  color: #fbbf24;
+  background: #2a2110;
+  padding: 8px 10px;
+}
+
+.import-issues li[data-severity="error"] {
+  border-color: #7f1d1d;
+  color: #fca5a5;
+  background: #2a1015;
+}
+
+.import-sample {
+  display: grid;
+  gap: 6px;
+}
+
+.import-sample span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cbd5e1;
+}
+
+.admin-secondary {
+  width: fit-content;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #e5e7eb;
+  padding: 0 12px;
+}
+
 .backup-section {
   grid-column: 1 / -1;
 }
@@ -406,39 +508,79 @@ button:disabled {
 }
 
 .editor-toolbar {
+  position: relative;
+  z-index: 5;
   justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
   border-bottom: 1px solid #273246;
-  padding: 8px calc(clamp(16px, 4vw, 44px) + var(--safe-area-right)) 8px calc(clamp(16px, 4vw, 44px) + var(--safe-area-left));
+  background: #0d1422;
+  padding: 10px calc(clamp(16px, 4vw, 44px) + var(--safe-area-right)) 10px calc(clamp(16px, 4vw, 44px) + var(--safe-area-left));
   overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: thin;
+  scrollbar-color: #475569 #0d1422;
+  -webkit-overflow-scrolling: touch;
+}
+
+.toolbar-group {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  border: 1px solid #273246;
+  border-radius: 8px;
+  background: #111827;
+  padding: 5px;
 }
 
 .editor-toolbar button,
 .icon-upload {
-  width: 32px;
-  height: 32px;
+  width: 38px;
+  height: 36px;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
+  border: 1px solid transparent;
+  color: #dbeafe;
+  background: #172033;
+  touch-action: manipulation;
 }
 
 .editor-toolbar button:hover,
 .editor-toolbar button.active,
 .icon-upload:hover {
-  background: #1e293b;
+  border-color: #3b82f6;
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
+.editor-toolbar button:focus-visible,
+.icon-upload:focus-within {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
 }
 
 .editor-toolbar button:disabled {
   cursor: not-allowed;
-  opacity: 0.38;
+  color: #64748b;
+  background: #0f172a;
+  border-color: #1e293b;
+  opacity: 1;
+}
+
+.editor-toolbar .text-tool {
+  min-width: 42px;
+  width: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .table-insert-controls {
-  display: inline-grid;
-  grid-template-columns: auto auto 32px;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
+  min-height: 48px;
 }
 
 .table-insert-controls label {
@@ -446,18 +588,23 @@ button:disabled {
   align-items: center;
   gap: 4px;
   color: #cbd5e1;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .table-insert-controls input {
-  width: 44px;
-  height: 28px;
+  width: 52px;
+  height: 36px;
   border: 1px solid #334155;
   border-radius: 5px;
   background: #0b1220;
   color: #e5e7eb;
-  padding: 0 4px;
+  padding: 0 6px;
   text-align: center;
+}
+
+.image-controls {
+  padding-right: 7px;
 }
 
 .icon-upload input {
@@ -574,6 +721,7 @@ button:disabled {
   border-radius: 6px;
   display: block;
   margin: 12px 0;
+  height: auto;
 }
 
 .editor-surface hr {
@@ -793,6 +941,8 @@ button:disabled {
     position: sticky;
     bottom: 0;
     z-index: 10;
+    flex-wrap: nowrap;
+    overflow-y: hidden;
     padding-bottom: calc(8px + var(--safe-area-bottom));
     background: #0d1422;
     border-top: 1px solid #273246;
