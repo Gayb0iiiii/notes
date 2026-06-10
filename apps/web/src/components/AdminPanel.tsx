@@ -21,6 +21,10 @@ const initialForm = {
   role: "editor" as "owner" | "editor"
 };
 
+function formatLastLogin(value: string | null): string {
+  return value ? new Date(value).toLocaleString() : "Never";
+}
+
 export function AdminPanel({ workspaceId }: AdminPanelProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [form, setForm] = useState(initialForm);
@@ -118,65 +122,80 @@ export function AdminPanel({ workspaceId }: AdminPanelProps) {
       {error ? <p className="admin-error">{error}</p> : null}
 
       <div className="admin-grid">
-        <section className="admin-section">
+        <section className="admin-section admin-users-section">
           <div className="admin-section-title">
             <ShieldCheck size={18} />
             <h3>Workspace Users</h3>
           </div>
           {loading ? (
             <p className="admin-muted">Loading users...</p>
+          ) : users.length === 0 ? (
+            <p className="admin-muted">No users found.</p>
           ) : (
-            <div className="user-table" role="table" aria-label="Workspace users">
-              <div className="user-row user-row-head" role="row">
-                <span>Name</span>
-                <span>Username</span>
-                <span>Role</span>
-                <span>Last login</span>
-                <span>Password</span>
-                <span />
-              </div>
+            <div className="admin-user-list" aria-label="Workspace users">
               {users.map((user) => (
-                <div className="user-row" role="row" key={user.id}>
-                  <input
-                    aria-label={`Display name for ${user.username}`}
-                    value={user.displayName}
-                    onChange={(event) => {
-                      const displayName = event.target.value;
-                      setUsers((current) => current.map((candidate) => (candidate.id === user.id ? { ...candidate, displayName } : candidate)));
-                    }}
-                    onBlur={(event) => {
-                      const displayName = event.target.value.trim();
-                      if (displayName) void updateUser(user, { displayName });
-                    }}
-                  />
-                  <span>{user.username}</span>
-                  <select
-                    aria-label={`Role for ${user.username}`}
-                    value={user.role}
-                    disabled={saving}
-                    onChange={(event) => void updateUser(user, { role: event.target.value as "owner" | "editor" })}
-                  >
-                    <option value="owner">Owner</option>
-                    <option value="editor">Editor</option>
-                  </select>
-                  <span>{user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : "Never"}</span>
-                  <div className="password-reset">
-                    <input
-                      aria-label={`New password for ${user.username}`}
-                      type="password"
-                      minLength={10}
-                      placeholder="New password"
-                      value={passwordDrafts[user.id] ?? ""}
-                      onChange={(event) => setPasswordDrafts((current) => ({ ...current, [user.id]: event.target.value }))}
-                    />
-                    <button type="button" title="Set password" onClick={() => void resetPassword(user)} disabled={saving || !passwordDrafts[user.id]}>
-                      <KeyRound size={15} />
+                <article className="admin-user-card" key={user.id}>
+                  <div className="admin-user-card-header">
+                    <div>
+                      <strong>{user.displayName || user.username}</strong>
+                      <p className="admin-muted">@{user.username}</p>
+                    </div>
+                    <button className="admin-remove-user" type="button" onClick={() => void removeUser(user)} disabled={saving}>
+                      <Trash2 size={15} />
+                      Remove
                     </button>
                   </div>
-                  <button className="icon-danger" type="button" title="Remove user" onClick={() => void removeUser(user)} disabled={saving}>
-                    <Trash2 size={15} />
-                  </button>
-                </div>
+
+                  <div className="admin-form admin-user-fields">
+                    <label>
+                      Display name
+                      <input
+                        aria-label={`Display name for ${user.username}`}
+                        value={user.displayName}
+                        onChange={(event) => {
+                          const displayName = event.target.value;
+                          setUsers((current) => current.map((candidate) => (candidate.id === user.id ? { ...candidate, displayName } : candidate)));
+                        }}
+                        onBlur={(event) => {
+                          const displayName = event.target.value.trim();
+                          if (displayName && displayName !== user.displayName) void updateUser(user, { displayName });
+                        }}
+                      />
+                    </label>
+
+                    <label>
+                      Role
+                      <select
+                        aria-label={`Role for ${user.username}`}
+                        value={user.role}
+                        disabled={saving}
+                        onChange={(event) => void updateUser(user, { role: event.target.value as "owner" | "editor" })}
+                      >
+                        <option value="owner">Owner</option>
+                        <option value="editor">Editor</option>
+                      </select>
+                    </label>
+
+                    <p className="admin-muted">Last login: {formatLastLogin(user.lastLoginAt)}</p>
+
+                    <label>
+                      Reset password
+                      <div className="password-reset">
+                        <input
+                          aria-label={`New password for ${user.username}`}
+                          type="password"
+                          minLength={10}
+                          placeholder="New password"
+                          value={passwordDrafts[user.id] ?? ""}
+                          onChange={(event) => setPasswordDrafts((current) => ({ ...current, [user.id]: event.target.value }))}
+                        />
+                        <button type="button" title="Set password" aria-label={`Set password for ${user.username}`} onClick={() => void resetPassword(user)} disabled={saving || !passwordDrafts[user.id]}>
+                          <KeyRound size={15} />
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+                </article>
               ))}
             </div>
           )}
@@ -194,7 +213,7 @@ export function AdminPanel({ workspaceId }: AdminPanelProps) {
             </label>
             <label>
               Username
-              <input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} required />
+              <input value={form.username} onChange={(event) => setForm({ ...form, username: event.target.value })} autoCapitalize="none" autoComplete="username" required />
             </label>
             <label>
               Temporary password
@@ -202,6 +221,7 @@ export function AdminPanel({ workspaceId }: AdminPanelProps) {
                 value={form.password}
                 minLength={10}
                 type="password"
+                autoComplete="new-password"
                 onChange={(event) => setForm({ ...form, password: event.target.value })}
                 required
               />
