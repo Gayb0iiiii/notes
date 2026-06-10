@@ -53,6 +53,7 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
   const [tableWidth, setTableWidth] = useState(4);
   const [imageError, setImageError] = useState<string | null>(null);
   const initializedPageId = useRef<string | null>(null);
+  const snapshotTimer = useRef<number | null>(null);
 
   const extensions = useMemo(() => {
     if (!ydoc) return [];
@@ -96,11 +97,20 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
         }
       },
       onUpdate({ editor: currentEditor }) {
-        void saveSnapshot(currentEditor.getHTML());
+        scheduleSnapshot(currentEditor.getHTML());
       }
     },
     [extensions, page.id]
   );
+
+  function scheduleSnapshot(html = editor?.getHTML()) {
+    if (!html) return;
+    if (snapshotTimer.current) window.clearTimeout(snapshotTimer.current);
+    snapshotTimer.current = window.setTimeout(() => {
+      snapshotTimer.current = null;
+      void saveSnapshot(html);
+    }, 450);
+  }
 
   async function saveSnapshot(html = editor?.getHTML()) {
     if (!html) return;
@@ -113,6 +123,10 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
 
   useEffect(() => {
     initializedPageId.current = null;
+    return () => {
+      if (snapshotTimer.current) window.clearTimeout(snapshotTimer.current);
+      snapshotTimer.current = null;
+    };
   }, [page.id]);
 
   useEffect(() => {
@@ -154,7 +168,7 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
   function run(action: () => void) {
     if (!editor) return;
     action();
-    void saveSnapshot();
+    scheduleSnapshot();
   }
 
   return (
