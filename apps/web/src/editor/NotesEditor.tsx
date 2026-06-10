@@ -1,6 +1,7 @@
 import Bold from "lucide-react/dist/esm/icons/bold.js";
 import CheckSquare from "lucide-react/dist/esm/icons/check-square.js";
 import Code2 from "lucide-react/dist/esm/icons/code-2.js";
+import FileText from "lucide-react/dist/esm/icons/file-text.js";
 import Heading1 from "lucide-react/dist/esm/icons/heading-1.js";
 import Heading2 from "lucide-react/dist/esm/icons/heading-2.js";
 import ImagePlus from "lucide-react/dist/esm/icons/image-plus.js";
@@ -26,7 +27,7 @@ import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import type { PageDto } from "@notes/shared";
-import { queueOrUploadImage } from "../lib/assets";
+import { queueOrUploadAsset } from "../lib/assets";
 import { localDb } from "../lib/localDb";
 import { usePageDocument } from "./usePageDocument";
 
@@ -35,6 +36,21 @@ interface NotesEditorProps {
   page: PageDto;
   pages: PageDto[];
 }
+
+const KnowledgeBaseImage = Image.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      width: {
+        default: "100%",
+        renderHTML: (attributes) => {
+          const width = typeof attributes.width === "string" && attributes.width ? attributes.width : "100%";
+          return { width, style: `width: ${width}; max-width: 100%; height: auto;` };
+        }
+      }
+    };
+  }
+});
 
 function clampNumber(value: number, min: number, max: number) {
   if (!Number.isFinite(value)) return min;
@@ -47,11 +63,15 @@ function uploadedFile(event: ChangeEvent<HTMLInputElement>): File | null {
   return file;
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
   const { ydoc, connected, localReady } = usePageDocument(workspaceId, page.id);
   const [tableLength, setTableLength] = useState(3);
   const [tableWidth, setTableWidth] = useState(4);
-  const [imageError, setImageError] = useState<string | null>(null);
+  const [assetError, setAssetError] = useState<string | null>(null);
   const initializedPageId = useRef<string | null>(null);
   const snapshotTimer = useRef<number | null>(null);
 
@@ -61,7 +81,7 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
       StarterKit.configure({ history: false }),
       Collaboration.configure({ document: ydoc }),
       Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }),
-      Image.configure({ allowBase64: true }),
+      KnowledgeBaseImage.configure({ allowBase64: true }),
       Placeholder.configure({ placeholder: "Start writing..." }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -82,17 +102,17 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
           spellcheck: "true"
         },
         handlePaste(_view, event) {
-          const file = [...(event.clipboardData?.files ?? [])].find((item) => item.type.startsWith("image/"));
+          const file = [...(event.clipboardData?.files ?? [])].find((item) => item.type.startsWith("image/") || item.type === "application/pdf");
           if (!file) return false;
           event.preventDefault();
-          void insertImage(file);
+          void insertAsset(file);
           return true;
         },
         handleDrop(_view, event) {
-          const file = [...(event.dataTransfer?.files ?? [])].find((item) => item.type.startsWith("image/"));
+          const file = [...(event.dataTransfer?.files ?? [])].find((item) => item.type.startsWith("image/") || item.type === "application/pdf");
           if (!file) return false;
           event.preventDefault();
-          void insertImage(file);
+          void insertAsset(file);
           return true;
         }
       },
@@ -119,6 +139,7 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
       html,
       updatedAt: new Date().toISOString()
     });
+    window.dispatchEvent(new CustomEvent("notes:document-snapshot", { detail: { pageId: page.id } }));
   }
 
   useEffect(() => {
@@ -145,24 +166,42 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
     });
   }, [editor, localReady, page.id, ydoc]);
 
-  async function insertImage(file: File) {
+  async function insertAsset(file: File) {
     if (!editor) return;
-    setImageError(null);
+    setAssetError(null);
     try {
-      const image = await queueOrUploadImage(workspaceId, page.id, file);
-      editor
-        .chain()
-        .focus()
-        .setImage({
-          src: image.src,
-          alt: file.name,
-          title: image.uploadStatus === "pending" ? "Queued for upload" : file.name
-        })
-        .run();
+      const asset = await queueOrUploadAsset(workspaceId, page.id, file);
+      if (asset.mimeType.startsWith("image/")) {
+        editor
+          .chain()
+          .focus()
+          .setImage({
+            src: asset.src,
+            alt: file.name,
+            title: asset.uploadStatus === "pending" ? "Queued for upload" : file.name,
+            width: "100%"
+          } as Parameters<typeof editor.commands.setImage>[0])
+          .run();
+      } else if (asset.mimeType === "application/pdf") {
+        const label = `${asset.uploadStatus === "pending" ? "Queued PDF" : "PDF"}: ${file.name}`;
+        editor
+          .chain()
+          .focus()
+          .insertContent(`<p><a href="${escapeHtml(asset.src)}" target="_blank" rel="noreferrer">📄 ${escapeHtml(label)}</a></p>`)
+          .run();
+      } else {
+        throw new Error("unsupported_asset_type");
+      }
       await saveSnapshot();
     } catch (error) {
-      setImageError(error instanceof Error ? error.message : "Image could not be added");
+      setAssetError(error instanceof Error ? error.message : "File could not be added");
     }
+  }
+
+  function setSelectedImageWidth(width: string) {
+    if (!editor?.isActive("image")) return;
+    editor.chain().focus().updateAttributes("image", { width }).run();
+    scheduleSnapshot();
   }
 
   function run(action: () => void) {
@@ -228,16 +267,29 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
           <Trash2 size={16} />
         </button>
 
-        <label className="icon-upload" title="Image">
+        <div className="image-size-controls" aria-label="Selected image size">
+          <button type="button" title="Image 50%" disabled={!editor?.isActive("image")} onClick={() => setSelectedImageWidth("50%")}>50</button>
+          <button type="button" title="Image 75%" disabled={!editor?.isActive("image")} onClick={() => setSelectedImageWidth("75%")}>75</button>
+          <button type="button" title="Image 100%" disabled={!editor?.isActive("image")} onClick={() => setSelectedImageWidth("100%")}>100</button>
+        </div>
+
+        <label className="icon-upload" title="Photo or PDF">
           <ImagePlus size={16} />
-          <input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => {
+          <input type="file" accept="image/*,application/pdf" onChange={(event) => {
             const file = uploadedFile(event);
-            if (file) void insertImage(file);
+            if (file) void insertAsset(file);
+          }} />
+        </label>
+        <label className="icon-upload" title="PDF">
+          <FileText size={16} />
+          <input type="file" accept="application/pdf" onChange={(event) => {
+            const file = uploadedFile(event);
+            if (file) void insertAsset(file);
           }} />
         </label>
         <span className="connection-dot" data-connected={connected}>{connected ? "Live" : localReady ? "Local" : "Loading"}</span>
       </div>
-      {imageError ? <p className="editor-error">{imageError}</p> : null}
+      {assetError ? <p className="editor-error">{assetError}</p> : null}
       <EditorContent editor={editor} />
     </section>
   );
