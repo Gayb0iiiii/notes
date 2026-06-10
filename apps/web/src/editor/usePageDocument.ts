@@ -2,18 +2,20 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { useEffect, useMemo, useState } from "react";
-import { collabUrl } from "../lib/api";
+import { collabUrl, nativeSessionCookie } from "../lib/api";
 import { recordDiagnosticEvent } from "../lib/diagnostics";
 import { demoWorkspaceId } from "../lib/demo";
 
 export function usePageDocument(workspaceId: string | null, pageId: string | null) {
   const [connected, setConnected] = useState(false);
   const [localReady, setLocalReady] = useState(false);
+  const [provider, setProvider] = useState<HocuspocusProvider | null>(null);
   const ydoc = useMemo(() => (pageId ? new Y.Doc() : null), [pageId]);
 
   useEffect(() => {
     if (!workspaceId || !pageId || !ydoc) return;
     setLocalReady(false);
+    setProvider(null);
     const persistence = new IndexeddbPersistence(`page:${pageId}`, ydoc);
     persistence.once("synced", () => {
       setLocalReady(true);
@@ -22,28 +24,32 @@ export function usePageDocument(workspaceId: string | null, pageId: string | nul
 
     const shouldConnectRealtime = navigator.onLine && workspaceId !== demoWorkspaceId;
     const url = collabUrl();
-    const provider = shouldConnectRealtime
+    const token = nativeSessionCookie();
+    const realtimeProvider = shouldConnectRealtime
       ? new HocuspocusProvider({
           url,
           name: `workspace:${workspaceId}:page:${pageId}`,
-          document: ydoc
+          document: ydoc,
+          token: token ?? undefined
         })
       : null;
 
-    if (provider) {
-      recordDiagnosticEvent("info", "collab", "Realtime provider created", { url, workspaceId, pageId });
-      provider.on("connect", () => {
+    setProvider(realtimeProvider);
+
+    if (realtimeProvider) {
+      recordDiagnosticEvent("info", "collab", "Realtime provider created", { url, workspaceId, pageId, hasToken: Boolean(token) });
+      realtimeProvider.on("connect", () => {
         setConnected(true);
         recordDiagnosticEvent("info", "collab", "Realtime connected", { workspaceId, pageId });
       });
-      provider.on("disconnect", (payload) => {
+      realtimeProvider.on("disconnect", (payload) => {
         setConnected(false);
         recordDiagnosticEvent("warn", "collab", "Realtime disconnected", { workspaceId, pageId, payload });
       });
-      provider.on("status", (payload) => {
+      realtimeProvider.on("status", (payload) => {
         recordDiagnosticEvent("info", "collab", "Realtime status", { workspaceId, pageId, payload });
       });
-      provider.on("authenticationFailed", (payload) => {
+      realtimeProvider.on("authenticationFailed", (payload) => {
         setConnected(false);
         recordDiagnosticEvent("error", "collab", "Realtime authentication failed", { workspaceId, pageId, payload });
       });
@@ -52,13 +58,14 @@ export function usePageDocument(workspaceId: string | null, pageId: string | nul
     }
 
     return () => {
+      setProvider(null);
       void persistence.destroy();
-      provider?.destroy();
+      realtimeProvider?.destroy();
       ydoc.destroy();
       setConnected(false);
       setLocalReady(false);
     };
   }, [workspaceId, pageId, ydoc]);
 
-  return { ydoc, connected, localReady };
+  return { ydoc, provider, connected, localReady };
 }
