@@ -38,6 +38,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 .app-shell {
   min-height: 100dvh;
   display: grid;
@@ -298,7 +303,6 @@ button {
   text-transform: uppercase;
 }
 
-.user-row input,
 .user-row select,
 .admin-form input,
 .admin-form select {
@@ -617,9 +621,25 @@ button {
 }
 
 .login-form {
-  width: min(360px, 100%);
+  width: min(390px, 100%);
   display: grid;
   gap: 14px;
+  border: 1px solid #273246;
+  border-radius: 16px;
+  background: #111827;
+  padding: 20px;
+  box-shadow: 0 22px 70px rgb(0 0 0 / 34%);
+}
+
+.login-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.login-eyebrow {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
 }
 
 .login-form h1 {
@@ -636,18 +656,18 @@ button {
 
 .login-form input {
   width: 100%;
-  min-height: 40px;
+  min-height: 44px;
   border: 1px solid #334155;
-  border-radius: 6px;
+  border-radius: 9px;
   background: #0b1220;
   color: #e5e7eb;
-  padding: 0 10px;
+  padding: 0 11px;
 }
 
 .login-form button[type="submit"],
 .secondary-login {
-  min-height: 42px;
-  border-radius: 6px;
+  min-height: 44px;
+  border-radius: 9px;
 }
 
 .login-form button[type="submit"] {
@@ -661,9 +681,48 @@ button {
   color: #e5e7eb;
 }
 
+.login-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid #273246;
+  border-radius: 9px;
+  background: #0b1220;
+  color: #cbd5e1;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.login-spinner {
+  width: 12px;
+  height: 12px;
+  display: none;
+  border: 2px solid #475569;
+  border-top-color: #93c5fd;
+  border-radius: 999px;
+  animation: login-spin 800ms linear infinite;
+}
+
+.login-status[data-busy="true"] .login-spinner {
+  display: inline-block;
+}
+
 .error-text {
   margin: 0;
+  border: 1px solid #7f1d1d;
+  border-radius: 9px;
+  background: #2a1015;
   color: #fca5a5;
+  padding: 10px 12px;
+  line-height: 1.45;
+}
+
+@keyframes login-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .mobile-menu {
