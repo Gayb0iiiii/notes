@@ -1,5 +1,5 @@
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
-import type { MetadataOperation, NotionImportPreview } from "@notes/shared";
+import type { MetadataOperation, NotionImportPreview, NotionImportApplyResult } from "@notes/shared";
 import { recordDiagnosticEvent } from "./diagnostics";
 
 const serverUrlKey = "notes.serverUrl";
@@ -28,6 +28,13 @@ export interface PageHistoryResponse {
   pageId: string;
   lastEdited: { editor: { userId: string; displayName: string }; editedAt: string } | null;
   revisions: PageHistoryRevision[];
+}
+
+export interface ImportedDocumentPayload {
+  pageId: string;
+  sourcePath: string;
+  title: string;
+  html: string;
 }
 
 export class ApiError extends Error {
@@ -326,5 +333,7 @@ export const notesApi = {
     return api<{ preview: NotionImportPreview }>(`/api/imports/notion/upload?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "POST", body: formData }, 120_000);
   },
   notionImportPreview: (importId: string) => api<{ preview: NotionImportPreview }>(`/api/imports/${importId}/preview`, {}, 15_000),
-  cancelNotionImport: (importId: string) => api<{ preview: NotionImportPreview }>(`/api/imports/${importId}/cancel`, { method: "POST" }, 15_000)
+  cancelNotionImport: (importId: string) => api<{ preview: NotionImportPreview }>(`/api/imports/${importId}/cancel`, { method: "POST", body: JSON.stringify({}) }, 15_000),
+  runNotionImport: (importId: string) =>
+    api<{ preview: NotionImportPreview; result: NotionImportApplyResult; documents: ImportedDocumentPayload[] }>(`/api/imports/${importId}/run`, { method: "POST", body: JSON.stringify({}) }, 120_000)
 };
