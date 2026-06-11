@@ -14,7 +14,7 @@ import {
   type NotionImportPagePreview,
   type NotionImportPreview
 } from "@notes/shared";
-import { eq, isNull } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -34,6 +34,8 @@ const maxPreviewRows = 50;
 const maxHtmlTitleBytes = 512 * 1024;
 const maxNestedZipDepth = 2;
 const importRootTitle = "Imported from Notion";
+const virtualFolderPrefix = "__folder__/";
+const maxInlineAssetBytes = 32 * 1024 * 1024;
 
 type PageRow = typeof pageTable.$inferSelect;
 type ImportJobRow = typeof importJobs.$inferSelect;
@@ -135,9 +137,56 @@ function cleanImportedHtml(html: string): string {
     .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "")
     .replace(/<object\b[^>]*>[\s\S]*?<\/object>/gi, "")
     .replace(/<embed\b[^>]*>/gi, "")
+    .replace(/<table\b[^>]*>[\s\S]*?<\/table>/gi, "<p><em>Table skipped from Notion import.</em></p>")
     .replace(/\son\w+=("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
     .replace(/\s(href|src)=("javascript:[^"]*"|'javascript:[^']*')/gi, "")
     .trim();
+}
+
+function markdownToHtml(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const html: string[] = [];
+  let inList = false;
+  const closeList = () => {
+    if (inList) {
+      html.push("</ul>");
+      inList = false;
+    }
+  };
+  const inline = (value: string) =>
+    escapeHtml(value)
+      .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1">')
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      closeList();
+      continue;
+    }
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (heading) {
+      closeList();
+      const level = heading[1].length;
+      html.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      continue;
+    }
+    const bullet = trimmed.match(/^[-*]\s+(.+)$/);
+    if (bullet) {
+      if (!inList) {
+        html.push("<ul>");
+        inList = true;
+      }
+      html.push(`<li>${inline(bullet[1])}</li>`);
+      continue;
+    }
+    closeList();
+    html.push(`<p>${inline(trimmed)}</p>`);
+  }
+  closeList();
+  return html.join("\n") || "<p></p>";
 }
 
 function normalizeComparableTitle(title: string): string {
@@ -154,6 +203,45 @@ function childKey(parentPageId: string | null, title: string): string {
 
 function orderedImportRows<T extends { sourcePath: string }>(rows: T[]): T[] {
   return rows.slice().sort((a, b) => a.sourcePath.split("/").length - b.sourcePath.split("/").length || a.sourcePath.localeCompare(b.sourcePath));
+}
+
+function sourceDisplayTitle(sourcePath: string): string {
+  const clean = sourcePath.startsWith(virtualFolderPrefix) ? sourcePath.slice(virtualFolderPrefix.length) : sourcePath;
+  return titleFromImportPath(clean.split("/").pop() ?? clean);
+}
+
+function directoryCandidates(directory: string): string[] {
+  return [`${directory}.html`, `${directory}.htm`, `${directory}.md`, `${directory}.markdown`, `${directory}/index.html`, `${directory}/index.htm`, `${directory}/index.md`];
+}
+
+function pageSourceForDirectory(directory: string, pageSourcePaths: Set<string>): string {
+  for (const candidate of directoryCandidates(directory)) {
+    if (pageSourcePaths.has(candidate)) return candidate;
+  }
+  return `${virtualFolderPrefix}${directory}`;
+}
+
+function parentSourceForDirectory(directory: string, pageSourcePaths: Set<string>): string | null {
+  const parentDirectory = path.posix.dirname(directory);
+  if (!parentDirectory || parentDirectory === ".") return null;
+  return pageSourceForDirectory(parentDirectory, pageSourcePaths);
+}
+
+function ensureVirtualFoldersForDirectory(directory: string, pageSourcePaths: Set<string>, virtualFolders: Map<string, NotionImportPagePreview>, workspaceId: string): void {
+  if (!directory || directory === ".") return;
+  const parts = directory.split("/").filter(Boolean);
+  for (let index = 0; index < parts.length; index += 1) {
+    const currentDirectory = parts.slice(0, index + 1).join("/");
+    const sourcePath = pageSourceForDirectory(currentDirectory, pageSourcePaths);
+    if (!sourcePath.startsWith(virtualFolderPrefix) || virtualFolders.has(sourcePath)) continue;
+    virtualFolders.set(sourcePath, {
+      sourcePath,
+      sourceIdGuess: sourceIdGuess(workspaceId, sourcePath),
+      title: sourceDisplayTitle(sourcePath),
+      parentSourcePath: parentSourceForDirectory(currentDirectory, pageSourcePaths),
+      assetPaths: []
+    });
+  }
 }
 
 function importPagePreviewFromRow(row: ImportPageRow): NotionImportPagePreview {
@@ -175,7 +263,7 @@ function pagePathFromSource(sourcePath: string, titleBySourcePath: Map<string, s
   let current: string | null | undefined = sourcePath;
   while (current && !seen.has(current)) {
     seen.add(current);
-    parts.unshift(titleBySourcePath.get(current) ?? titleFromImportPath(current));
+    parts.unshift(titleBySourcePath.get(current) ?? sourceDisplayTitle(current));
     current = parentBySourcePath.get(current) ?? null;
   }
   return [importRootTitle, ...parts];
@@ -256,7 +344,7 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
           kind: classification.kind,
           mimeType: classification.mimeType,
           isPageCandidate: classification.isPageCandidate,
-          isAssetCandidate: classification.isAssetCandidate && !isZipPath(normalized.path)
+          isAssetCandidate: classification.isAssetCandidate && classification.kind !== "csv" && !isZipPath(normalized.path)
         });
         zipFile.readEntry();
       } catch (error) {
@@ -284,20 +372,28 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
   }
 
   const pageSourcePaths = new Set(pageFiles.map((file) => file.sourcePath));
-  const pages = await Promise.all(
-    pageFiles.map(async (file) => ({
-      sourcePath: file.sourcePath,
-      sourceIdGuess: sourceIdGuess(workspaceId, file.sourcePath),
-      title: await titleForFile(file),
-      parentSourcePath: deriveParentSourcePath(file.sourcePath, pageSourcePaths),
-      htmlPath: file.kind === "html" ? file.sourcePath : undefined,
-      markdownPath: file.kind === "markdown" ? file.sourcePath : undefined,
-      assetPaths: []
-    }))
+  const virtualFolders = new Map<string, NotionImportPagePreview>();
+  const actualPages = await Promise.all(
+    pageFiles.map(async (file) => {
+      const directory = path.posix.dirname(file.sourcePath);
+      ensureVirtualFoldersForDirectory(directory, pageSourcePaths, virtualFolders, workspaceId);
+      const explicitParent = deriveParentSourcePath(file.sourcePath, pageSourcePaths);
+      const parentSourcePath = explicitParent ?? (directory && directory !== "." ? pageSourceForDirectory(directory, pageSourcePaths) : null);
+      return {
+        sourcePath: file.sourcePath,
+        sourceIdGuess: sourceIdGuess(workspaceId, file.sourcePath),
+        title: await titleForFile(file),
+        parentSourcePath,
+        htmlPath: file.kind === "html" ? file.sourcePath : undefined,
+        markdownPath: file.kind === "markdown" ? file.sourcePath : undefined,
+        assetPaths: []
+      } satisfies NotionImportPagePreview;
+    })
   );
+  const pages = orderedImportRows([...virtualFolders.values(), ...actualPages]);
   const assets = files.filter((file) => file.isAssetCandidate).map((file) => ({ sourcePath: file.sourcePath, originalFilename: file.sourcePath.split("/").pop() ?? file.sourcePath, mimeType: file.mimeType, sizeBytes: file.sizeBytes, kind: file.kind }));
-  if (databaseCount > 0) issues.push({ sourcePath: null, severity: "warning", code: "databases_preview_only", message: "CSV database exports are detected, but database import is not enabled in this milestone." });
-  if (unsupportedCount > 0) issues.push({ sourcePath: null, severity: "warning", code: "generic_files_detected", message: "Some files are not page, image, PDF, or CSV assets and will need review before full import." });
+  if (databaseCount > 0) issues.push({ sourcePath: null, severity: "warning", code: "databases_preview_only", message: "CSV database/table exports were detected and intentionally skipped. Recreate Notion tables manually." });
+  if (unsupportedCount > 0) issues.push({ sourcePath: null, severity: "warning", code: "generic_files_detected", message: "Some linked generic files were detected. Linked files are preserved when referenced by imported pages." });
   return { files, pages, assets, issues, totalSizeBytes, unsupportedCount, databaseCount };
 }
 
@@ -339,20 +435,67 @@ async function loadPreview(importId: string, request: FastifyRequest): Promise<N
   return previewFromRows(job);
 }
 
-function contentFilePath(job: ImportJobRow, row: ImportPageRow): string | null {
+function contentFilePath(_job: ImportJobRow, row: ImportPageRow): string | null {
   const stored = row.htmlPath ?? row.markdownPath;
   if (!stored) return null;
-  if (path.isAbsolute(stored)) return stored;
-  if (!job.tempStoragePath) return null;
-  return path.join(job.tempStoragePath, "extract", stored);
+  return stored;
+}
+
+function decodedRefPath(rawRef: string): string {
+  const withoutHash = rawRef.split("#")[0]?.split("?")[0] ?? rawRef;
+  try {
+    return decodeURIComponent(withoutHash);
+  } catch {
+    return withoutHash;
+  }
+}
+
+function shouldRewriteRef(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  return Boolean(trimmed) && !trimmed.startsWith("http:") && !trimmed.startsWith("https:") && !trimmed.startsWith("data:") && !trimmed.startsWith("mailto:") && !trimmed.startsWith("#") && !trimmed.startsWith("javascript:");
+}
+
+async function fileToDataUrl(filePath: string, sourcePath: string): Promise<string | null> {
+  const fileStat = await stat(filePath).catch(() => null);
+  if (!fileStat || fileStat.size > maxInlineAssetBytes) return null;
+  const classification = classifyNotionImportFile(sourcePath);
+  const buffer = await readFile(filePath);
+  return `data:${classification.mimeType};base64,${buffer.toString("base64")}`;
+}
+
+async function rewriteImportedAssetRefs(html: string, baseDir: string): Promise<string> {
+  const attrPattern = /\s(src|href)=("([^"]*)"|'([^']*)')/gi;
+  const replacements: Array<{ start: number; end: number; value: string }> = [];
+  for (const match of html.matchAll(attrPattern)) {
+    const whole = match[0];
+    const attr = match[1];
+    const quote = match[2].startsWith("'") ? "'" : '"';
+    const rawRef = match[3] ?? match[4] ?? "";
+    if (!shouldRewriteRef(rawRef) || match.index === undefined) continue;
+    const decoded = decodedRefPath(rawRef);
+    const resolved = path.resolve(baseDir, decoded);
+    const dataUrl = await fileToDataUrl(resolved, decoded).catch(() => null);
+    if (!dataUrl) continue;
+    replacements.push({ start: match.index, end: match.index + whole.length, value: ` ${attr}=${quote}${dataUrl}${quote}` });
+  }
+  if (replacements.length === 0) return html;
+  let output = "";
+  let cursor = 0;
+  for (const replacement of replacements) {
+    output += html.slice(cursor, replacement.start) + replacement.value;
+    cursor = replacement.end;
+  }
+  output += html.slice(cursor);
+  return output;
 }
 
 async function documentHtmlForRow(job: ImportJobRow, row: ImportPageRow): Promise<string> {
   const filePath = contentFilePath(job, row);
   if (!filePath) return `<h1>${escapeHtml(row.title)}</h1>`;
   const raw = await readFile(filePath, "utf8");
-  if (row.htmlPath) return cleanImportedHtml(raw) || `<h1>${escapeHtml(row.title)}</h1>`;
-  return `<pre>${escapeHtml(raw)}</pre>`;
+  const baseDir = path.dirname(filePath);
+  if (row.htmlPath) return rewriteImportedAssetRefs(cleanImportedHtml(raw) || `<h1>${escapeHtml(row.title)}</h1>`, baseDir);
+  return rewriteImportedAssetRefs(markdownToHtml(raw), baseDir);
 }
 
 export async function importRoutes(app: FastifyInstance) {
