@@ -24,6 +24,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 4000
+      NATIVE_APP_ORIGINS: ${NATIVE_APP_ORIGINS:-capacitor://localhost,ionic://localhost,capacitor://notes.yeetserver.net}
     expose:
       - "4000"
     depends_on:
