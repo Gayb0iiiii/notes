@@ -21,7 +21,7 @@ async function loadEsbuild() {
         if (a === "esbuild@0.25.12") return -1;
         if (b === "esbuild@0.25.12") return 1;
         return b.localeCompare(a);
-    });
+      });
     for (const candidate of candidates) {
       const entry = path.join(pnpmDir, candidate, "node_modules/esbuild/lib/main.js");
       if (fs.existsSync(entry)) return require(entry);
@@ -34,6 +34,8 @@ fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(path.join(outDir, "assets"), { recursive: true });
 fs.cpSync(path.join(appRoot, "public"), outDir, { recursive: true });
 
+// viewport-fit=cover is required for env(safe-area-inset-*) to return
+// non-zero values on iPhones with a notch or Dynamic Island.
 fs.writeFileSync(
   path.join(outDir, "index.html"),
   `<!doctype html>

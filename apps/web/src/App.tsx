@@ -12,22 +12,66 @@ import { bootstrapOfflineWorkspace } from "./lib/demo";
 import { recordDiagnosticEvent } from "./lib/diagnostics";
 import { localDb } from "./lib/localDb";
 import { cachePages, flushMetadataOutbox, pendingMetadataOperationCount } from "./lib/syncEngine";
+import { getRoute, pushRoute, replaceRoute, onRouteChange } from "./lib/router";
 import { useAppStore } from "./store/appStore";
 
 const NotesEditor = lazy(() => import("./editor/NotesEditor").then((module) => ({ default: module.NotesEditor })));
 
-type AppView = "notes" | "admin" | "history";
-
 export function App() {
   const { workspaceId, pages, activePageId, syncStatus, sidebarOpen, setWorkspaceId, setPages, setActivePageId, setSyncStatus, setSidebarOpen } = useAppStore();
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [activeView, setActiveView] = useState<AppView>("notes");
   const [workspaceRole, setWorkspaceRole] = useState<"owner" | "editor" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const workspaceIdRef = useRef<string | null>(workspaceId);
   const bootingRef = useRef(false);
   const visiblePages = useMemo(() => pages.filter((page) => !page.archivedAt && !page.deletedAt), [pages]);
   const activePage = useMemo(() => visiblePages.find((page) => page.id === activePageId) ?? visiblePages[0] ?? null, [activePageId, visiblePages]);
+
+  // Derive view + active page from the URL hash.
+  const [route, setRoute] = useState(() => getRoute());
+
+  // Keep the active page ID in the store in sync with the URL.
+  useEffect(() => {
+    if (route.view === "notes" && route.pageId && route.pageId !== activePageId) {
+      setActivePageId(route.pageId);
+    }
+  }, [route]);
+
+  // Listen for hash changes (back/forward gestures, programmatic navigation).
+  useEffect(() => {
+    return onRouteChange((next) => {
+      setRoute(next);
+      if (next.view === "notes" && next.pageId) {
+        setActivePageId(next.pageId);
+      }
+    });
+  }, []);
+
+  // When the active page changes via the sidebar, push the new route.
+  function navigateToPage(pageId: string) {
+    setActivePageId(pageId);
+    pushRoute({ view: "notes", pageId });
+    setSidebarOpen(false);
+  }
+
+  function navigateToAdmin() {
+    pushRoute({ view: "admin" });
+  }
+
+  function navigateToHistory(pageId: string) {
+    pushRoute({ view: "history", pageId });
+  }
+
+  function navigateBack() {
+    // Prefer the browser back stack so the native iOS swipe-back gesture works.
+    if (window.history.length > 1) {
+      window.history.back();
+    } else if (activePage) {
+      pushRoute({ view: "notes", pageId: activePage.id });
+    } else {
+      pushRoute({ view: "notes", pageId: null });
+    }
+  }
 
   useEffect(() => {
     workspaceIdRef.current = workspaceId;
@@ -54,7 +98,9 @@ export function App() {
     const visibleNextPages = nextPages.filter((page) => !page.archivedAt && !page.deletedAt);
     setPages(nextPages);
     if (!visibleNextPages.some((page) => page.id === activePageId)) {
-      setActivePageId((visibleNextPages[0] ?? null)?.id ?? null);
+      const fallback = visibleNextPages[0] ?? null;
+      setActivePageId(fallback?.id ?? null);
+      if (fallback) replaceRoute({ view: "notes", pageId: fallback.id });
     }
     return nextPages;
   }
@@ -83,9 +129,9 @@ export function App() {
     setPages([]);
     setActivePageId(null);
     setSyncStatus(navigator.onLine ? "synced" : "offline");
-    setActiveView("notes");
-    setWorkspaceRole(null);
     setSidebarOpen(false);
+    setWorkspaceRole(null);
+    replaceRoute({ view: "notes", pageId: null });
   }
 
   async function boot() {
@@ -119,7 +165,9 @@ export function App() {
       setPages(remote.pages);
       const visibleRemotePages = remote.pages.filter((page) => !page.archivedAt && !page.deletedAt);
       if (!visibleRemotePages.some((page) => page.id === activePageId)) {
-        setActivePageId((visibleRemotePages[0] ?? null)?.id ?? null);
+        const fallback = visibleRemotePages[0] ?? null;
+        setActivePageId(fallback?.id ?? null);
+        if (fallback) replaceRoute({ view: "notes", pageId: fallback.id });
       }
 
       const queued = await pendingMetadataOperationCount(workspace.id);
@@ -175,21 +223,26 @@ export function App() {
     };
   }, []);
 
+  // Guard: non-owners can't reach admin view.
   useEffect(() => {
-    if (activeView === "admin" && workspaceRole !== "owner") {
-      setActiveView("notes");
+    if (route.view === "admin" && workspaceRole !== "owner") {
+      pushRoute({ view: "notes", pageId: activePage?.id ?? null });
     }
-  }, [activeView, workspaceRole]);
+  }, [route.view, workspaceRole]);
 
+  // Guard: history view requires an active page.
   useEffect(() => {
-    if (activeView === "history" && !activePage) {
-      setActiveView("notes");
+    if (route.view === "history" && !activePage) {
+      pushRoute({ view: "notes", pageId: null });
     }
-  }, [activePage, activeView]);
+  }, [activePage, route.view]);
 
   if (authenticated === null) return <main className="loading-screen">Loading local workspace...</main>;
   if (!authenticated) return <Login onLogin={() => void boot()} />;
   if (!workspaceId) return <main className="loading-screen">No workspace available</main>;
+
+  const activeHistoryPageId = route.view === "history" ? route.pageId : null;
+  const historyPage = activeHistoryPageId ? (visiblePages.find((p) => p.id === activeHistoryPageId) ?? null) : null;
 
   return (
     <div className="app-shell">
@@ -199,23 +252,30 @@ export function App() {
         activePageId={activePage?.id ?? null}
         open={sidebarOpen}
         onToggle={() => setSidebarOpen(!sidebarOpen)}
-        onSelect={(pageId) => {
-          setActivePageId(pageId);
-          setActiveView("notes");
-        }}
+        onSelect={(pageId) => navigateToPage(pageId)}
         onLocalChange={() => void loadLocalPages(workspaceId)}
       />
       <main className="main-panel">
         <header className="topbar">
           <div className="topbar-title-block">
-            <span className="breadcrumb">{activeView === "history" ? "Page History" : "Private Notes"}</span>
-            <h1>{activeView === "admin" ? "Admin" : activePage?.title ?? "Untitled"}</h1>
-            {activePage && activeView !== "admin" ? <PageHistorySummary pageId={activePage.id} onOpen={() => setActiveView("history")} /> : null}
+            <span className="breadcrumb">{route.view === "history" ? "Page History" : "Private Notes"}</span>
+            <h1>{route.view === "admin" ? "Admin" : activePage?.title ?? "Untitled"}</h1>
+            {activePage && route.view !== "admin" ? <PageHistorySummary pageId={activePage.id} onOpen={() => navigateToHistory(activePage.id)} /> : null}
           </div>
           <div className="topbar-actions">
             {workspaceRole === "owner" ? (
-              <button className="view-toggle" type="button" onClick={() => setActiveView(activeView === "admin" ? "notes" : "admin")}>
-                {activeView === "admin" ? "Notes" : "Admin"}
+              <button
+                className="view-toggle"
+                type="button"
+                onClick={() => {
+                  if (route.view === "admin") {
+                    pushRoute({ view: "notes", pageId: activePage?.id ?? null });
+                  } else {
+                    navigateToAdmin();
+                  }
+                }}
+              >
+                {route.view === "admin" ? "Notes" : "Admin"}
               </button>
             ) : null}
             <button className="view-toggle" type="button" onClick={() => setSettingsOpen(true)}>
@@ -224,22 +284,33 @@ export function App() {
             <SyncStatus status={syncStatus} />
           </div>
         </header>
-        {activeView === "admin" && workspaceRole === "owner" ? (
+        {route.view === "admin" && workspaceRole === "owner" ? (
           <AdminPanel workspaceId={workspaceId} onImported={() => void boot()} />
-        ) : activeView === "history" && activePage ? (
-          <PageHistoryPanel pageId={activePage.id} pageTitle={activePage.title} onBack={() => setActiveView("notes")} />
+        ) : route.view === "history" && historyPage ? (
+          <PageHistoryPanel pageId={historyPage.id} pageTitle={historyPage.title} onBack={navigateBack} />
         ) : activePage ? (
           <>
             <Suspense fallback={<div className="editor-empty">Loading local editor...</div>}>
               <NotesEditor workspaceId={workspaceId} page={activePage} pages={pages} />
             </Suspense>
-            <Backlinks pageId={activePage.id} onSelect={setActivePageId} />
+            <Backlinks pageId={activePage.id} onSelect={(pageId) => navigateToPage(pageId)} />
           </>
         ) : (
           <section className="empty-state">Create a page to start writing.</section>
         )}
       </main>
       <LocalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} onRequireLogin={resetToLogin} />
+      {/* Mobile sidebar toggle — kept outside the main-panel so it floats above the keyboard */}
+      {!sidebarOpen && (
+        <button
+          className="mobile-menu"
+          type="button"
+          aria-label="Open sidebar"
+          onClick={() => setSidebarOpen(true)}
+        >
+          &#9776;
+        </button>
+      )}
     </div>
   );
 }

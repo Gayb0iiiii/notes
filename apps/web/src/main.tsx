@@ -19,6 +19,15 @@ document.documentElement.dataset.platform = platform;
 
 if (Capacitor.isNativePlatform()) {
   document.documentElement.dataset.native = "true";
+
+  // Initialise the keyboard plugin on native platforms.
+  // `resizeOnFullScreen` keeps the layout correct when the keyboard is shown
+  // during a full-screen modal or inside the TipTap editor.
+  // The `resize: "contentHeight"` option is set in capacitor.config.ts.
+  void import("@capacitor/keyboard").then(({ Keyboard }) => {
+    void Keyboard.setScroll({ isDisabled: false });
+    void Keyboard.setAccessoryBarVisible({ isVisible: true });
+  });
 }
 
 registerServiceWorker();
