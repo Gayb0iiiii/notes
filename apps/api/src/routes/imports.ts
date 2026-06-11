@@ -25,8 +25,9 @@ import { pipeline } from "node:stream/promises";
 import yauzl, { type Entry, type ZipFile } from "yauzl";
 import { z } from "zod";
 import { requireAuth, requireWorkspaceRole } from "../auth/session";
-import { db } from "../db/client";
+import { db, pool } from "../db/client";
 import { importAssets, importErrors, importJobs, importPages, pages as pageTable } from "../db/schema";
+import { htmlToYjsUpdate } from "../imports/yjsDocument";
 
 const uploadQuerySchema = z.object({ workspaceId: z.string().uuid() });
 const importParamsSchema = z.object({ importId: z.string().uuid() });
@@ -498,6 +499,25 @@ async function documentHtmlForRow(job: ImportJobRow, row: ImportPageRow): Promis
   return rewriteImportedAssetRefs(markdownToHtml(raw), baseDir);
 }
 
+async function persistImportedDocument(input: { pageId: string; workspaceId: string; userId: string; html: string }): Promise<void> {
+  const state = htmlToYjsUpdate(input.html);
+  await pool.query("begin");
+  try {
+    await pool.query("insert into page_updates (page_id, workspace_id, user_id, update_binary) values ($1, $2, $3, $4)", [input.pageId, input.workspaceId, input.userId, state]);
+    await pool.query(
+      `insert into page_documents (page_id, workspace_id, yjs_state, version, updated_at)
+       values ($1, $2, $3, 1, now())
+       on conflict (page_id)
+       do update set yjs_state = excluded.yjs_state, version = page_documents.version + 1, updated_at = now()`,
+      [input.pageId, input.workspaceId, state]
+    );
+    await pool.query("commit");
+  } catch (error) {
+    await pool.query("rollback");
+    throw error;
+  }
+}
+
 export async function importRoutes(app: FastifyInstance) {
   await app.register(multipart as never, { limits: { files: 1, fileSize: NOTION_IMPORT_MAX_TOTAL_BYTES, fields: 0 } } as never);
 
@@ -594,7 +614,10 @@ export async function importRoutes(app: FastifyInstance) {
       addedPageIds.push(createdRoot.id);
       addedPages += 1;
       existingByParentAndTitle.set(childKey(null, importRootTitle), createdRoot);
+      await persistImportedDocument({ pageId: createdRoot.id, workspaceId: job.workspaceId, userId: auth.userId, html: `<h1>${escapeHtml(importRootTitle)}</h1>` });
     }
+
+    await db.update(importJobs).set({ status: "importing_documents", updatedAt: new Date() }).where(eq(importJobs.id, params.importId));
 
     for (let index = 0; index < importRows.length; index += 1) {
       const row = importRows[index]!;
@@ -610,7 +633,9 @@ export async function importRoutes(app: FastifyInstance) {
       existingByParentAndTitle.set(childKey(parentPageId, created.title), created);
       addedPageIds.push(created.id);
       addedPages += 1;
-      documents.push({ pageId: created.id, sourcePath: row.sourcePath, title: created.title, html: await documentHtmlForRow(job, row) });
+      const html = await documentHtmlForRow(job, row);
+      await persistImportedDocument({ pageId: created.id, workspaceId: job.workspaceId, userId: auth.userId, html });
+      documents.push({ pageId: created.id, sourcePath: row.sourcePath, title: created.title, html });
     }
 
     const result: NotionImportApplyResult = { importId: params.importId, status: "completed", addedPages, skippedPages, errorCount: 0, rootPageId: rootPage?.id ?? null, addedPageIds };
