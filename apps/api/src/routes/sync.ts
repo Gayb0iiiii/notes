@@ -1,5 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { canEdit, normalizeTitle, shouldApplyMetadataOperation } from "@notes/shared";
 import { requireAuth, requireWorkspaceRole } from "../auth/session";
@@ -41,7 +41,7 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
         parentPageId: payload.parentPageId ?? null,
         title: normalizeTitle(payload.title),
         icon: payload.icon ?? null,
-        sortOrder: String(payload.sortOrder),
+        sortOrder: payload.sortOrder,
         createdBy: userId,
         updatedBy: userId
       })
@@ -70,7 +70,7 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
       .update(pages)
       .set({
         parentPageId: payload.parentPageId === undefined ? existing.parentPageId : payload.parentPageId,
-        sortOrder: String(payload.sortOrder),
+        sortOrder: payload.sortOrder,
         updatedBy: userId,
         updatedAt: new Date()
       })
@@ -100,7 +100,6 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
   }
 
   // Should never reach here — all enum variants are handled above.
-  // If a new operation type is added to the schema, this will surface it at runtime.
   throw Object.assign(new Error(`Unhandled operation type: ${operation.type}`), { statusCode: 500 });
 }
 
@@ -147,5 +146,24 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
       .from(pages)
       .where(query.since ? and(eq(pages.workspaceId, query.workspaceId), gt(pages.updatedAt, new Date(query.since))) : eq(pages.workspaceId, query.workspaceId));
     return { pages: rows.map(toPageDto), serverTime: new Date().toISOString() };
+  });
+
+  /**
+   * Purge idempotency records older than 90 days.
+   * metadataOperations grows unbounded otherwise — call this from a cron job
+   * or a periodic background task. Owner-only so it cannot be triggered by editors.
+   * Returns the number of rows deleted.
+   */
+  app.post("/metadata/purge-old", async (request) => {
+    const auth = await requireAuth(request);
+    const body = z.object({ workspaceId: z.string().uuid(), olderThanDays: z.number().int().min(1).default(90) }).parse(request.body);
+    const role = await requireWorkspaceRole(request, body.workspaceId);
+    if (role !== "owner") throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
+    const cutoff = new Date(Date.now() - body.olderThanDays * 24 * 60 * 60 * 1000);
+    const deleted = await db
+      .delete(metadataOperations)
+      .where(and(eq(metadataOperations.workspaceId, body.workspaceId), lt(metadataOperations.createdAt, cutoff)))
+      .returning({ id: metadataOperations.idempotencyKey });
+    return { deletedCount: deleted.length, cutoff: cutoff.toISOString() };
   });
 };

@@ -12,6 +12,8 @@ const createPageSchema = z.object({
   parentPageId: z.string().uuid().nullable().optional(),
   title: z.string().default("Untitled"),
   icon: z.string().nullable().optional(),
+  // sortOrder is a numeric column — pass the number directly, do NOT cast to String()
+  // so Postgres sorts correctly (string "10" < "9", number 10 > 9)
   sortOrder: z.number().default(0)
 });
 
@@ -161,7 +163,7 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
         parentPageId: body.parentPageId ?? null,
         title: normalizeTitle(body.title),
         icon: body.icon ?? null,
-        sortOrder: String(body.sortOrder),
+        sortOrder: body.sortOrder,
         createdBy: auth.userId,
         updatedBy: auth.userId
       })
@@ -178,7 +180,6 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
     if (!existing) throw Object.assign(new Error("Not found"), { statusCode: 404 });
     const role = await requireWorkspaceRole(request, existing.workspaceId);
     if (!canEdit(role)) throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
-    // Reject mutations on archived pages — client should restore first
     if (existing.archivedAt) return reply.code(409).send({ error: "page_archived" });
     const [page] = await db
       .update(pages)
@@ -201,11 +202,10 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
     if (!existing) throw Object.assign(new Error("Not found"), { statusCode: 404 });
     const role = await requireWorkspaceRole(request, existing.workspaceId);
     if (!canEdit(role)) throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
-    // Reject moves on archived pages
     if (existing.archivedAt) return reply.code(409).send({ error: "page_archived" });
     const [page] = await db
       .update(pages)
-      .set({ parentPageId: body.parentPageId, sortOrder: String(body.sortOrder), updatedBy: auth.userId, updatedAt: new Date() })
+      .set({ parentPageId: body.parentPageId, sortOrder: body.sortOrder, updatedBy: auth.userId, updatedAt: new Date() })
       .where(eq(pages.id, params.pageId))
       .returning();
     return { page: toPageDto(page) };

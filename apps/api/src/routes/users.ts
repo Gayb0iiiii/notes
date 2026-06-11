@@ -5,7 +5,7 @@ import { canManageUsers } from "@notes/shared";
 import { hashPassword } from "../auth/password";
 import { requireAuth, requireWorkspaceRole } from "../auth/session";
 import { db } from "../db/client";
-import { users, workspaceMembers, workspaces } from "../db/schema";
+import { users, workspaceMembers } from "../db/schema";
 
 const createUserSchema = z.object({
   workspaceId: z.string().uuid(),
@@ -16,11 +16,12 @@ const createUserSchema = z.object({
 });
 
 export const userRoutes: FastifyPluginAsync = async (app) => {
+  // workspaceId is a required query param — previously this guessed from ownerUserId
+  // which silently returned the wrong workspace for users who own multiple workspaces.
   app.get("/", async (request) => {
-    const auth = await requireAuth(request);
-    const [workspace] = await db.select().from(workspaces).where(eq(workspaces.ownerUserId, auth.userId)).limit(1);
-    if (!workspace) return [];
-    const role = await requireWorkspaceRole(request, workspace.id);
+    await requireAuth(request);
+    const query = z.object({ workspaceId: z.string().uuid() }).parse(request.query);
+    const role = await requireWorkspaceRole(request, query.workspaceId);
     if (!canManageUsers(role)) throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
     return db
       .select({
@@ -33,7 +34,7 @@ export const userRoutes: FastifyPluginAsync = async (app) => {
       })
       .from(workspaceMembers)
       .innerJoin(users, eq(users.id, workspaceMembers.userId))
-      .where(eq(workspaceMembers.workspaceId, workspace.id));
+      .where(eq(workspaceMembers.workspaceId, query.workspaceId));
   });
 
   app.post("/", async (request) => {

@@ -6,7 +6,13 @@ const envSchema = z.object({
   APP_URL: z.string().url().default("http://localhost:5173"),
   NATIVE_APP_ORIGINS: z.string().default("capacitor://localhost,ionic://localhost"),
   DATABASE_URL: z.string().min(1),
-  SESSION_SECRET: z.string().min(32),
+  SESSION_SECRET: z
+    .string()
+    .min(32)
+    .refine(
+      (s) => new Set(s).size > 8,
+      "SESSION_SECRET appears too low-entropy — use a cryptographically random value (e.g. openssl rand -hex 32)"
+    ),
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(180),
   S3_ENDPOINT: z.string().url(),
   S3_BUCKET: z.string().min(1),
