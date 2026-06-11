@@ -225,7 +225,7 @@ export function App() {
           </div>
         </header>
         {activeView === "admin" && workspaceRole === "owner" ? (
-          <AdminPanel workspaceId={workspaceId} />
+          <AdminPanel workspaceId={workspaceId} onImported={() => void boot()} />
         ) : activeView === "history" && activePage ? (
           <PageHistoryPanel pageId={activePage.id} pageTitle={activePage.title} onBack={() => setActiveView("notes")} />
         ) : activePage ? (
