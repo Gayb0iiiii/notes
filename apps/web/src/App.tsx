@@ -6,6 +6,7 @@ import { SyncStatus } from "./components/SyncStatus";
 import { Backlinks } from "./components/Backlinks";
 import { AdminPanel } from "./components/AdminPanel";
 import { LocalSettings } from "./components/LocalSettings";
+import { PageHistoryPanel, PageHistorySummary } from "./components/PageHistory";
 import { notesApi } from "./lib/api";
 import { bootstrapOfflineWorkspace } from "./lib/demo";
 import { recordDiagnosticEvent } from "./lib/diagnostics";
@@ -15,10 +16,12 @@ import { useAppStore } from "./store/appStore";
 
 const NotesEditor = lazy(() => import("./editor/NotesEditor").then((module) => ({ default: module.NotesEditor })));
 
+type AppView = "notes" | "admin" | "history";
+
 export function App() {
   const { workspaceId, pages, activePageId, syncStatus, sidebarOpen, setWorkspaceId, setPages, setActivePageId, setSyncStatus, setSidebarOpen } = useAppStore();
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [activeView, setActiveView] = useState<"notes" | "admin">("notes");
+  const [activeView, setActiveView] = useState<AppView>("notes");
   const [workspaceRole, setWorkspaceRole] = useState<"owner" | "editor" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const workspaceIdRef = useRef<string | null>(workspaceId);
@@ -178,6 +181,12 @@ export function App() {
     }
   }, [activeView, workspaceRole]);
 
+  useEffect(() => {
+    if (activeView === "history" && !activePage) {
+      setActiveView("notes");
+    }
+  }, [activePage, activeView]);
+
   if (authenticated === null) return <main className="loading-screen">Loading local workspace...</main>;
   if (!authenticated) return <Login onLogin={() => void boot()} />;
   if (!workspaceId) return <main className="loading-screen">No workspace available</main>;
@@ -192,14 +201,16 @@ export function App() {
         onToggle={() => setSidebarOpen(!sidebarOpen)}
         onSelect={(pageId) => {
           setActivePageId(pageId);
+          setActiveView("notes");
         }}
         onLocalChange={() => void loadLocalPages(workspaceId)}
       />
       <main className="main-panel">
         <header className="topbar">
-          <div>
-            <span className="breadcrumb">Private Notes</span>
+          <div className="topbar-title-block">
+            <span className="breadcrumb">{activeView === "history" ? "Page History" : "Private Notes"}</span>
             <h1>{activeView === "admin" ? "Admin" : activePage?.title ?? "Untitled"}</h1>
+            {activePage && activeView !== "admin" ? <PageHistorySummary pageId={activePage.id} onOpen={() => setActiveView("history")} /> : null}
           </div>
           <div className="topbar-actions">
             {workspaceRole === "owner" ? (
@@ -215,6 +226,8 @@ export function App() {
         </header>
         {activeView === "admin" && workspaceRole === "owner" ? (
           <AdminPanel workspaceId={workspaceId} />
+        ) : activeView === "history" && activePage ? (
+          <PageHistoryPanel pageId={activePage.id} pageTitle={activePage.title} onBack={() => setActiveView("notes")} />
         ) : activePage ? (
           <>
             <Suspense fallback={<div className="editor-empty">Loading local editor...</div>}>
