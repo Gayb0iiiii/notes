@@ -3,7 +3,7 @@ import Clock3 from "lucide-react/dist/esm/icons/clock-3.js";
 import History from "lucide-react/dist/esm/icons/history.js";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.js";
 import { useEffect, useState } from "react";
-import type { PageHistoryResponse } from "../lib/api";
+import type { PageHistoryRevision, PageHistoryResponse } from "../lib/api";
 import { notesApi } from "../lib/api";
 
 interface PageHistorySummaryProps {
@@ -17,13 +17,19 @@ interface PageHistoryPanelProps {
   onBack: () => void;
 }
 
-function formatEditedAt(value: string): string {
-  return new Date(value).toLocaleString([], {
-    day: "2-digit",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit"
-  });
+const relativeFormatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+function formatRelative(value: string): string {
+  const edited = new Date(value).getTime();
+  const diffMs = edited - Date.now();
+  const absMs = Math.abs(diffMs);
+  const minute = 60 * 1000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+  if (absMs < minute) return "just now";
+  if (absMs < hour) return relativeFormatter.format(Math.round(diffMs / minute), "minute");
+  if (absMs < day) return relativeFormatter.format(Math.round(diffMs / hour), "hour");
+  return relativeFormatter.format(Math.round(diffMs / day), "day");
 }
 
 function formatFullEditedAt(value: string): string {
@@ -38,7 +44,23 @@ function formatFullEditedAt(value: string): string {
 }
 
 function revisionWord(count: number): string {
-  return count === 1 ? "revision" : "revisions";
+  return count === 1 ? "session" : "sessions";
+}
+
+function updateWord(count: number): string {
+  return count === 1 ? "change" : "changes";
+}
+
+function sessionLabel(revision: PageHistoryRevision): string {
+  const updates = revision.updateCount ?? 1;
+  return updates > 1 ? `${updates} small ${updateWord(updates)} grouped` : "1 edit";
+}
+
+function diffLabel(revision: PageHistoryRevision): string {
+  const total = revision.additions + revision.deletions;
+  if (total <= 2) return "small edit";
+  if (total <= 12) return "medium edit";
+  return "large edit";
 }
 
 export function PageHistorySummary({ pageId, onOpen }: PageHistorySummaryProps) {
@@ -67,10 +89,10 @@ export function PageHistorySummary({ pageId, onOpen }: PageHistorySummaryProps) 
       <Clock3 size={14} />
       {lastEdited ? (
         <span>
-          Last edited by <strong>{lastEdited.editor.displayName}</strong> at {formatEditedAt(lastEdited.editedAt)}
+          Edited {formatRelative(lastEdited.editedAt)} by <strong>{lastEdited.editor.displayName}</strong>
         </span>
       ) : (
-        <span>Open page history</span>
+        <span>No edits in the last week</span>
       )}
     </button>
   );
@@ -98,6 +120,7 @@ export function PageHistoryPanel({ pageId, pageTitle, onBack }: PageHistoryPanel
   }, [pageId]);
 
   const revisions = history?.revisions ?? [];
+  const windowDays = history?.windowDays ?? 7;
 
   return (
     <section className="page-history-panel">
@@ -114,8 +137,9 @@ export function PageHistoryPanel({ pageId, pageTitle, onBack }: PageHistoryPanel
 
       <div className="history-heading">
         <div>
-          <span className="breadcrumb">Page History</span>
+          <span className="breadcrumb">Last {windowDays} days</span>
           <h2>{pageTitle}</h2>
+          <p>Small edits are grouped into clean editing sessions.</p>
         </div>
         <div className="history-revision-count">
           <History size={16} />
@@ -129,8 +153,8 @@ export function PageHistoryPanel({ pageId, pageTitle, onBack }: PageHistoryPanel
       {!loading && revisions.length === 0 ? (
         <div className="history-empty">
           <History size={22} />
-          <strong>No editor history yet</strong>
-          <p>Once someone edits this page, their changes will show here.</p>
+          <strong>No edits in the last week</strong>
+          <p>Older history is intentionally not shown.</p>
         </div>
       ) : null}
 
@@ -139,10 +163,11 @@ export function PageHistoryPanel({ pageId, pageTitle, onBack }: PageHistoryPanel
           <article className="history-card" key={revision.id}>
             <div className="history-card-main">
               <strong>{revision.editor.displayName}</strong>
-              <span>edited this page</span>
+              <span>{sessionLabel(revision)}</span>
               <time dateTime={revision.editedAt}>{formatFullEditedAt(revision.editedAt)}</time>
             </div>
             <div className="history-diff-stats" aria-label="Revision change size">
+              <span className="diff-size-label">{diffLabel(revision)}</span>
               <span className="diff-add">+{revision.additions}</span>
               <span className="diff-delete">-{revision.deletions}</span>
             </div>
