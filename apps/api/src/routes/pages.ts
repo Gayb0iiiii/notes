@@ -15,11 +15,16 @@ const createPageSchema = z.object({
   sortOrder: z.number().default(0)
 });
 
-type HistoryRow = {
-  id: number;
+const recentHistoryDays = 7;
+const editSessionGapMinutes = 15;
+
+type HistorySessionRow = {
+  session_id: string;
   user_id: string;
   display_name: string;
-  created_at: Date;
+  started_at: Date;
+  ended_at: Date;
+  update_count: number;
   bytes_changed: number;
 };
 
@@ -29,12 +34,13 @@ type MetadataEditorRow = {
   edited_at: Date;
 };
 
-function revisionStats(bytesChanged: number, previousBytesChanged: number): { additions: number; deletions: number } {
-  const normalized = Math.max(1, Math.round(bytesChanged / 96));
-  const previous = Math.max(0, Math.round(previousBytesChanged / 96));
+function sessionStats(bytesChanged: number, updateCount: number): { additions: number; deletions: number; changeSizeBytes: number } {
+  const normalized = Math.max(1, Math.round(bytesChanged / 160));
+  const groupedPenalty = Math.max(0, updateCount - 1);
   return {
     additions: Math.max(1, normalized),
-    deletions: previous > normalized ? Math.max(1, previous - normalized) : 0
+    deletions: 0,
+    changeSizeBytes: Math.max(0, bytesChanged - groupedPenalty)
   };
 }
 
@@ -54,18 +60,44 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
     if (!existing) throw Object.assign(new Error("Not found"), { statusCode: 404 });
     await requireWorkspaceRole(request, existing.workspaceId);
 
-    const historyResult = await pool.query<HistoryRow>(
-      `select pu.id,
-              pu.user_id,
+    const historyResult = await pool.query<HistorySessionRow>(
+      `with recent_updates as (
+         select pu.id,
+                pu.user_id,
+                pu.created_at,
+                octet_length(pu.update_binary)::int as bytes_changed,
+                lag(pu.user_id) over (order by pu.created_at asc, pu.id asc) as previous_user_id,
+                lag(pu.created_at) over (order by pu.created_at asc, pu.id asc) as previous_created_at
+           from page_updates pu
+          where pu.page_id = $1
+            and pu.workspace_id = $2
+            and pu.created_at >= now() - ($3::int * interval '1 day')
+       ), grouped_updates as (
+         select *,
+                sum(
+                  case
+                    when previous_user_id = user_id
+                     and previous_created_at is not null
+                     and created_at - previous_created_at <= ($4::int * interval '1 minute')
+                    then 0
+                    else 1
+                  end
+                ) over (order by created_at asc, id asc) as session_number
+           from recent_updates
+       )
+       select concat(min(gu.id)::text, '-', max(gu.id)::text) as session_id,
+              gu.user_id,
               u.display_name,
-              pu.created_at,
-              octet_length(pu.update_binary) as bytes_changed
-         from page_updates pu
-         join users u on u.id = pu.user_id
-        where pu.page_id = $1 and pu.workspace_id = $2
-        order by pu.id desc
-        limit 80`,
-      [params.pageId, existing.workspaceId]
+              min(gu.created_at) as started_at,
+              max(gu.created_at) as ended_at,
+              count(*)::int as update_count,
+              sum(gu.bytes_changed)::int as bytes_changed
+         from grouped_updates gu
+         join users u on u.id = gu.user_id
+        group by gu.session_number, gu.user_id, u.display_name
+        order by max(gu.created_at) desc
+        limit 40`,
+      [params.pageId, existing.workspaceId, recentHistoryDays, editSessionGapMinutes]
     );
 
     const metadataEditor = await pool.query<MetadataEditorRow>(
@@ -73,34 +105,36 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
          from pages p
          join users u on u.id = p.updated_by
         where p.id = $1
+          and p.updated_at >= now() - ($2::int * interval '1 day')
         limit 1`,
-      [params.pageId]
+      [params.pageId, recentHistoryDays]
     );
 
-    const ascending = historyResult.rows.slice().reverse();
-    let previousBytes = 0;
-    const computed = ascending.map((row) => {
-      const stats = revisionStats(Number(row.bytes_changed), previousBytes);
-      previousBytes = Number(row.bytes_changed);
+    const revisions = historyResult.rows.map((row) => {
+      const stats = sessionStats(Number(row.bytes_changed), Number(row.update_count));
       return {
-        id: String(row.id),
+        id: row.session_id,
         editor: { userId: row.user_id, displayName: row.display_name },
-        editedAt: row.created_at.toISOString(),
+        editedAt: row.ended_at.toISOString(),
+        startedAt: row.started_at.toISOString(),
+        endedAt: row.ended_at.toISOString(),
+        updateCount: Number(row.update_count),
         additions: stats.additions,
         deletions: stats.deletions,
-        changeSizeBytes: Number(row.bytes_changed)
+        changeSizeBytes: stats.changeSizeBytes
       };
     });
-    const revisions = computed.reverse();
     const latestRevision = revisions[0];
     const latestMetadata = metadataEditor.rows[0];
 
     return {
       pageId: params.pageId,
+      windowDays: recentHistoryDays,
+      groupedByMinutes: editSessionGapMinutes,
       lastEdited: latestRevision
-        ? { editor: latestRevision.editor, editedAt: latestRevision.editedAt }
+        ? { editor: latestRevision.editor, editedAt: latestRevision.editedAt, updateCount: latestRevision.updateCount }
         : latestMetadata
-          ? { editor: { userId: latestMetadata.user_id, displayName: latestMetadata.display_name }, editedAt: latestMetadata.edited_at.toISOString() }
+          ? { editor: { userId: latestMetadata.user_id, displayName: latestMetadata.display_name }, editedAt: latestMetadata.edited_at.toISOString(), updateCount: 1 }
           : null,
       revisions
     };
