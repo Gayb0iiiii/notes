@@ -1,0 +1,172 @@
+.topbar-title-block {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.page-history-summary {
+  width: fit-content;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  color: #94a3b8;
+  font-size: 13px;
+  text-align: left;
+}
+
+.page-history-summary:hover {
+  color: #bfdbfe;
+}
+
+.page-history-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-history-summary strong {
+  color: #cbd5e1;
+}
+
+.page-history-panel {
+  min-width: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 24px calc(clamp(16px, 4vw, 44px) + var(--safe-area-right)) calc(96px + var(--safe-area-bottom)) calc(clamp(16px, 4vw, 44px) + var(--safe-area-left));
+}
+
+.page-history-topbar,
+.history-heading,
+.history-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.history-back,
+.history-refresh,
+.history-revision-count {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 8px;
+  background: #111827;
+  color: #cbd5e1;
+  padding: 0 12px;
+}
+
+.history-back:hover,
+.history-refresh:hover {
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.history-heading h2 {
+  margin: 4px 0 0;
+  color: #f8fafc;
+  font-size: clamp(24px, 4vw, 36px);
+}
+
+.history-revision-count {
+  border: 1px solid #334155;
+  white-space: nowrap;
+}
+
+.history-list {
+  display: grid;
+  gap: 10px;
+}
+
+.history-card {
+  border: 1px solid #273246;
+  border-radius: 10px;
+  background: #0b1220;
+  padding: 14px;
+}
+
+.history-card-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.history-card-main strong {
+  color: #f8fafc;
+}
+
+.history-card-main span,
+.history-card-main time {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.history-diff-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.diff-add {
+  color: #4ade80;
+}
+
+.diff-delete {
+  color: #f87171;
+}
+
+.history-empty {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  border: 1px dashed #334155;
+  border-radius: 12px;
+  color: #94a3b8;
+  padding: 18px;
+}
+
+.history-empty strong {
+  color: #f8fafc;
+}
+
+.history-empty p {
+  margin: 0;
+}
+
+@media (max-width: 760px) {
+  .page-history-summary {
+    width: 100%;
+    font-size: 12px;
+  }
+
+  .page-history-panel {
+    padding: 16px calc(12px + var(--safe-area-right)) calc(96px + var(--safe-area-bottom)) calc(12px + var(--safe-area-left));
+  }
+
+  .page-history-topbar,
+  .history-heading,
+  .history-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .history-back,
+  .history-refresh,
+  .history-revision-count {
+    width: 100%;
+    min-height: 42px;
+  }
+
+  .history-diff-stats {
+    justify-content: flex-start;
+  }
+}
