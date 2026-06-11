@@ -159,6 +159,12 @@ function writeStoredCookie(cookie: string): void {
   window.localStorage.setItem(nativeCookieKey, cookie);
 }
 
+function nativeSessionToken(): string | null {
+  const cookie = readStoredCookie();
+  if (!cookie) return null;
+  return cookie.startsWith("notes_session=") ? cookie.slice("notes_session=".length) : cookie;
+}
+
 export function nativeSessionCookie(): string | null {
   return readStoredCookie();
 }
@@ -227,12 +233,15 @@ async function webApi<T>(path: string, init: RequestInit, timeoutMs = 12000): Pr
   const timeout = window.setTimeout(() => controller.abort("request_timeout"), timeoutMs);
   const url = apiUrl(path);
   const isFormData = isFormDataBody(init.body);
+  const sessionToken = nativeSessionToken();
+  const headers = isFormData ? headersToObject(init.headers) : { "content-type": "application/json", ...headersToObject(init.headers) };
+  if (isFormData && sessionToken) headers.authorization = `Bearer ${sessionToken}`;
 
   try {
     const response = await fetch(url, {
       ...init,
       credentials: "include",
-      headers: isFormData ? init.headers : { "content-type": "application/json", ...(init.headers ?? {}) },
+      headers,
       signal: init.signal ?? controller.signal
     });
     if (!response.ok) {
