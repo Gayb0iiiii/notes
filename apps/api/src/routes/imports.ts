@@ -642,9 +642,7 @@ export async function importRoutes(app: FastifyInstance) {
     let skippedPages = 0;
 
     if (importRows.length > 0 && !rootPage) {
-      // Pass Date.now() as a number — sortOrder is a numeric column; String() causes
-      // lexicographic ordering bugs once values exceed a single digit.
-      const [createdRoot] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId: null, title: importRootTitle, icon: null, sortOrder: Date.now(), createdBy: auth.userId, updatedBy: auth.userId }).returning();
+      const [createdRoot] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId: null, title: importRootTitle, icon: null, sortOrder: String(Date.now()), createdBy: auth.userId, updatedBy: auth.userId }).returning();
       rootPage = createdRoot;
       addedPageIds.push(createdRoot.id);
       addedPages += 1;
@@ -663,7 +661,7 @@ export async function importRoutes(app: FastifyInstance) {
         skippedPages += 1;
         continue;
       }
-      const [created] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId, title: normalizeDbTitle(row.title), icon: null, sortOrder: Date.now() + index + 1, createdBy: auth.userId, updatedBy: auth.userId }).returning();
+      const [created] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId, title: normalizeDbTitle(row.title), icon: null, sortOrder: String(Date.now() + index + 1), createdBy: auth.userId, updatedBy: auth.userId }).returning();
       sourceToPageId.set(row.sourcePath, created.id);
       existingByParentAndTitle.set(childKey(parentPageId, created.title), created);
       addedPageIds.push(created.id);
