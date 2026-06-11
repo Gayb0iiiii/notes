@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { FastifyPluginAsync } from "fastify";
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -55,11 +55,13 @@ export const assetRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/complete", async (request) => {
-    await requireAuth(request);
+    const auth = await requireAuth(request);
     const body = z.object({ assetId: z.string().uuid(), width: z.number().int().positive().optional(), height: z.number().int().positive().optional() }).parse(request.body);
     const [asset] = await db.select().from(assets).where(eq(assets.id, body.assetId)).limit(1);
     if (!asset) throw Object.assign(new Error("Not found"), { statusCode: 404 });
     await requireWorkspaceRole(request, asset.workspaceId);
+    // Only the user who initiated the upload may mark it complete
+    if (asset.uploadedBy !== auth.userId) throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
     const [updated] = await db
       .update(assets)
       .set({ uploadStatus: "uploaded", width: body.width, height: body.height, updatedAt: new Date() })
@@ -85,7 +87,10 @@ export const assetRoutes: FastifyPluginAsync = async (app) => {
     if (!asset) throw Object.assign(new Error("Not found"), { statusCode: 404 });
     const role = await requireWorkspaceRole(request, asset.workspaceId);
     if (role !== "owner") throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
-    await db.update(assets).set({ uploadStatus: "failed", updatedAt: new Date() }).where(eq(assets.id, params.assetId));
+    // Delete the object from S3 first; if this throws the DB record is left intact
+    // so a retry can still clean up the object.
+    await s3.send(new DeleteObjectCommand({ Bucket: config.S3_BUCKET, Key: asset.storageKey }));
+    await db.delete(assets).where(eq(assets.id, params.assetId));
     return { ok: true };
   });
 };

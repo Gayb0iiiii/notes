@@ -34,6 +34,13 @@ type MetadataEditorRow = {
   edited_at: Date;
 };
 
+/**
+ * Approximate edit statistics for a grouped session.
+ * `bytesChanged` is the sum of raw YJS update binary sizes for the session.
+ * Dividing by 160 gives a rough "line equivalent" count — 160 is a heuristic
+ * based on average characters per line in typical prose content. It is not
+ * precise; treat the result as a UI hint, not an audit log.
+ */
 function sessionStats(bytesChanged: number, updateCount: number): { additions: number; deletions: number; changeSizeBytes: number } {
   const normalized = Math.max(1, Math.round(bytesChanged / 160));
   const groupedPenalty = Math.max(0, updateCount - 1);
@@ -163,7 +170,7 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
     return { page: page ? toPageDto(page) : null };
   });
 
-  app.patch("/pages/:pageId", async (request) => {
+  app.patch("/pages/:pageId", async (request, reply) => {
     const auth = await requireAuth(request);
     const params = z.object({ pageId: z.string().uuid() }).parse(request.params);
     const body = z.object({ title: z.string().optional(), icon: z.string().nullable().optional() }).parse(request.body);
@@ -171,6 +178,8 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
     if (!existing) throw Object.assign(new Error("Not found"), { statusCode: 404 });
     const role = await requireWorkspaceRole(request, existing.workspaceId);
     if (!canEdit(role)) throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
+    // Reject mutations on archived pages — client should restore first
+    if (existing.archivedAt) return reply.code(409).send({ error: "page_archived" });
     const [page] = await db
       .update(pages)
       .set({
@@ -179,12 +188,12 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
         updatedBy: auth.userId,
         updatedAt: new Date()
       })
-      .where(and(eq(pages.id, params.pageId), isNull(pages.archivedAt)))
+      .where(eq(pages.id, params.pageId))
       .returning();
-    return { page: page ? toPageDto(page) : toPageDto(existing) };
+    return { page: toPageDto(page) };
   });
 
-  app.post("/pages/:pageId/move", async (request) => {
+  app.post("/pages/:pageId/move", async (request, reply) => {
     const auth = await requireAuth(request);
     const params = z.object({ pageId: z.string().uuid() }).parse(request.params);
     const body = z.object({ parentPageId: z.string().uuid().nullable(), sortOrder: z.number().default(0) }).parse(request.body);
@@ -192,12 +201,14 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
     if (!existing) throw Object.assign(new Error("Not found"), { statusCode: 404 });
     const role = await requireWorkspaceRole(request, existing.workspaceId);
     if (!canEdit(role)) throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
+    // Reject moves on archived pages
+    if (existing.archivedAt) return reply.code(409).send({ error: "page_archived" });
     const [page] = await db
       .update(pages)
       .set({ parentPageId: body.parentPageId, sortOrder: String(body.sortOrder), updatedBy: auth.userId, updatedAt: new Date() })
-      .where(and(eq(pages.id, params.pageId), isNull(pages.archivedAt)))
+      .where(eq(pages.id, params.pageId))
       .returning();
-    return { page: page ? toPageDto(page) : toPageDto(existing) };
+    return { page: toPageDto(page) };
   });
 
   app.post("/pages/:pageId/archive", async (request) => {

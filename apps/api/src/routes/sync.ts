@@ -89,13 +89,19 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
     return { status: "applied", page: toPageDto(page) };
   }
 
-  const payload = z.object({ pageId: z.string().uuid() }).parse(operation.payload);
-  const [page] = await db
-    .update(pages)
-    .set({ archivedAt: null, updatedBy: userId, updatedAt: new Date() })
-    .where(eq(pages.id, payload.pageId))
-    .returning();
-  return { status: "applied", page: toPageDto(page) };
+  if (operation.type === "restore_page") {
+    const payload = z.object({ pageId: z.string().uuid() }).parse(operation.payload);
+    const [page] = await db
+      .update(pages)
+      .set({ archivedAt: null, updatedBy: userId, updatedAt: new Date() })
+      .where(eq(pages.id, payload.pageId))
+      .returning();
+    return { status: "applied", page: toPageDto(page) };
+  }
+
+  // Should never reach here — all enum variants are handled above.
+  // If a new operation type is added to the schema, this will surface it at runtime.
+  throw Object.assign(new Error(`Unhandled operation type: ${operation.type}`), { statusCode: 500 });
 }
 
 export const syncRoutes: FastifyPluginAsync = async (app) => {

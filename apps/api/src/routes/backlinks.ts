@@ -37,17 +37,21 @@ export const backlinkRoutes: FastifyPluginAsync = async (app) => {
       return { ok: true, linkCount: 0, skipped: "page_not_synced" };
     }
     await requireWorkspaceRole(request, page.workspaceId);
-    await db.delete(pageLinks).where(eq(pageLinks.sourcePageId, params.pageId));
     const links = mergePageLinks(params.pageId, body.targetPageIds);
-    if (links.length > 0) {
-      await db.insert(pageLinks).values(
-        links.map((link) => ({
-          workspaceId: page.workspaceId,
-          sourcePageId: link.sourcePageId,
-          targetPageId: link.targetPageId
-        }))
-      );
-    }
+    // Wrap delete + insert in a transaction so a partial insert failure
+    // never leaves the page with zero recorded links.
+    await db.transaction(async (tx) => {
+      await tx.delete(pageLinks).where(eq(pageLinks.sourcePageId, params.pageId));
+      if (links.length > 0) {
+        await tx.insert(pageLinks).values(
+          links.map((link) => ({
+            workspaceId: page.workspaceId,
+            sourcePageId: link.sourcePageId,
+            targetPageId: link.targetPageId
+          }))
+        );
+      }
+    });
     return { ok: true, linkCount: links.length };
   });
 };

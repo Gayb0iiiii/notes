@@ -11,8 +11,11 @@ const loginSchema = z.object({
   password: z.string().min(1)
 });
 
+// Tight rate limit shared by login and change-password to prevent brute-force.
+const sensitiveRateLimit = { config: { rateLimit: { max: 10, timeWindow: "10 minutes" } } };
+
 export const authRoutes: FastifyPluginAsync = async (app) => {
-  app.post("/login", { config: { rateLimit: { max: 10, timeWindow: "10 minutes" } } }, async (request, reply) => {
+  app.post("/login", sensitiveRateLimit, async (request, reply) => {
     const body = loginSchema.parse(request.body);
     const [user] = await db.select().from(users).where(eq(users.username, body.username)).limit(1);
 
@@ -39,7 +42,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return { user: auth, memberships };
   });
 
-  app.post("/change-password", async (request) => {
+  app.post("/change-password", sensitiveRateLimit, async (request) => {
     const auth = await requireAuth(request);
     const body = z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(10) }).parse(request.body);
     const [user] = await db.select().from(users).where(eq(users.id, auth.userId)).limit(1);
