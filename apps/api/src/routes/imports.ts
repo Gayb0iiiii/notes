@@ -8,12 +8,13 @@ import {
   extractHtmlTitle,
   normalizeNotionImportPath,
   titleFromImportPath,
+  type NotionImportApplyResult,
   type NotionImportAssetPreview,
   type NotionImportIssue,
   type NotionImportPagePreview,
   type NotionImportPreview
 } from "@notes/shared";
-import { eq } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
@@ -25,13 +26,19 @@ import yauzl, { type Entry, type ZipFile } from "yauzl";
 import { z } from "zod";
 import { requireAuth, requireWorkspaceRole } from "../auth/session";
 import { db } from "../db/client";
-import { importAssets, importErrors, importJobs, importPages } from "../db/schema";
+import { importAssets, importErrors, importJobs, importPages, pages as pageTable } from "../db/schema";
 
 const uploadQuerySchema = z.object({ workspaceId: z.string().uuid() });
 const importParamsSchema = z.object({ importId: z.string().uuid() });
 const maxPreviewRows = 50;
 const maxHtmlTitleBytes = 512 * 1024;
 const maxNestedZipDepth = 2;
+const importRootTitle = "Imported from Notion";
+
+type PageRow = typeof pageTable.$inferSelect;
+type ImportJobRow = typeof importJobs.$inferSelect;
+type ImportPageRow = typeof importPages.$inferSelect;
+type StagedPagePreview = NotionImportPagePreview & { path: string; action: "add" | "skip"; reason?: string; existingPageId?: string };
 
 interface ExtractedFile {
   sourcePath: string;
@@ -55,6 +62,13 @@ interface ScanResult {
 
 interface ImportUploadRequest extends FastifyRequest {
   file(): Promise<MultipartFile | undefined>;
+}
+
+interface ImportedDocumentPayload {
+  pageId: string;
+  sourcePath: string;
+  title: string;
+  html: string;
 }
 
 function openZip(zipPath: string): Promise<ZipFile> {
@@ -109,6 +123,92 @@ function mergeScanResults(results: ScanResult[]): ScanResult {
   );
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;");
+}
+
+function cleanImportedHtml(html: string): string {
+  const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1] ?? html;
+  return body
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "")
+    .replace(/<object\b[^>]*>[\s\S]*?<\/object>/gi, "")
+    .replace(/<embed\b[^>]*>/gi, "")
+    .replace(/\son\w+=("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/\s(href|src)=("javascript:[^"]*"|'javascript:[^']*')/gi, "")
+    .trim();
+}
+
+function normalizeComparableTitle(title: string): string {
+  return title.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function normalizeDbTitle(title: string): string {
+  return title.trim().replace(/\s+/g, " ").slice(0, 240) || "Untitled";
+}
+
+function childKey(parentPageId: string | null, title: string): string {
+  return `${parentPageId ?? "root"}:${normalizeComparableTitle(title)}`;
+}
+
+function orderedImportRows<T extends { sourcePath: string }>(rows: T[]): T[] {
+  return rows.slice().sort((a, b) => a.sourcePath.split("/").length - b.sourcePath.split("/").length || a.sourcePath.localeCompare(b.sourcePath));
+}
+
+function importPagePreviewFromRow(row: ImportPageRow): NotionImportPagePreview {
+  return {
+    sourcePath: row.sourcePath,
+    sourceIdGuess: row.sourceIdGuess,
+    title: row.title,
+    parentSourcePath: row.parentSourcePath,
+    htmlPath: row.htmlPath ?? undefined,
+    markdownPath: row.markdownPath ?? undefined,
+    csvPath: row.csvPath ?? undefined,
+    assetPaths: JSON.parse(row.assetPaths) as string[]
+  };
+}
+
+function pagePathFromSource(sourcePath: string, titleBySourcePath: Map<string, string>, parentBySourcePath: Map<string, string | null>): string[] {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  let current: string | null | undefined = sourcePath;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    parts.unshift(titleBySourcePath.get(current) ?? titleFromImportPath(current));
+    current = parentBySourcePath.get(current) ?? null;
+  }
+  return [importRootTitle, ...parts];
+}
+
+async function activePagesForWorkspace(workspaceId: string): Promise<PageRow[]> {
+  return db.select().from(pageTable).where(eq(pageTable.workspaceId, workspaceId)).then((rows) => rows.filter((page) => !page.archivedAt && !page.deletedAt));
+}
+
+async function stageImportPages(workspaceId: string, importPagesToStage: NotionImportPagePreview[]): Promise<StagedPagePreview[]> {
+  const existingPages = await activePagesForWorkspace(workspaceId);
+  const existingByParentAndTitle = new Map(existingPages.map((page) => [childKey(page.parentPageId, page.title), page]));
+  const rootPage = existingByParentAndTitle.get(childKey(null, importRootTitle));
+  const rootReference = rootPage?.id ?? "__new_notion_import_root__";
+  const titleBySourcePath = new Map(importPagesToStage.map((page) => [page.sourcePath, page.title]));
+  const parentBySourcePath = new Map(importPagesToStage.map((page) => [page.sourcePath, page.parentSourcePath]));
+  const sourceToReference = new Map<string, string>();
+
+  return orderedImportRows(importPagesToStage).map((page) => {
+    const parentReference = page.parentSourcePath ? sourceToReference.get(page.parentSourcePath) ?? rootReference : rootReference;
+    const existingPage = existingByParentAndTitle.get(childKey(parentReference, page.title));
+    const reference = existingPage?.id ?? `__new:${page.sourcePath}`;
+    sourceToReference.set(page.sourcePath, reference);
+    return {
+      ...page,
+      path: pagePathFromSource(page.sourcePath, titleBySourcePath, parentBySourcePath).join(" / "),
+      action: existingPage ? "skip" : "add",
+      reason: existingPage ? "matching page already exists" : undefined,
+      existingPageId: existingPage?.id
+    };
+  });
+}
+
 async function titleForFile(file: ExtractedFile): Promise<string> {
   if (file.kind === "html" && file.sizeBytes <= maxHtmlTitleBytes) {
     const html = await readFile(file.diskPath, "utf8");
@@ -130,30 +230,19 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
     zipFile.on("entry", async (entry) => {
       try {
         const normalized = normalizeNotionImportPath(entry.fileName);
-        if (!normalized.ok) {
-          throw Object.assign(new Error(`Unsafe zip entry: ${normalized.reason}`), { code: normalized.reason });
-        }
-
+        if (!normalized.ok) throw Object.assign(new Error(`Unsafe zip entry: ${normalized.reason}`), { code: normalized.reason });
         if (/\/$/.test(entry.fileName)) {
           await mkdir(safeDestination(extractDir, normalized.path), { recursive: true });
           zipFile.readEntry();
           return;
         }
-
-        if (files.length + 1 > NOTION_IMPORT_MAX_FILE_COUNT) {
-          throw Object.assign(new Error("Notion export contains too many files"), { code: "too_many_files" });
-        }
-        if (entry.uncompressedSize > NOTION_IMPORT_MAX_SINGLE_FILE_BYTES && !isZipPath(normalized.path)) {
-          throw Object.assign(new Error("A single file in the export is too large"), { code: "single_file_too_large" });
-        }
-        if (totalSizeBytes + entry.uncompressedSize > NOTION_IMPORT_MAX_TOTAL_BYTES) {
-          throw Object.assign(new Error("Notion export is too large to import safely"), { code: "zip_too_large" });
-        }
+        if (files.length + 1 > NOTION_IMPORT_MAX_FILE_COUNT) throw Object.assign(new Error("Notion export contains too many files"), { code: "too_many_files" });
+        if (entry.uncompressedSize > NOTION_IMPORT_MAX_SINGLE_FILE_BYTES && !isZipPath(normalized.path)) throw Object.assign(new Error("A single file in the export is too large"), { code: "single_file_too_large" });
+        if (totalSizeBytes + entry.uncompressedSize > NOTION_IMPORT_MAX_TOTAL_BYTES) throw Object.assign(new Error("Notion export is too large to import safely"), { code: "zip_too_large" });
 
         const classification = classifyNotionImportFile(normalized.path);
         if (classification.kind === "file" && !isZipPath(normalized.path)) unsupportedCount += 1;
         if (classification.kind === "csv") databaseCount += 1;
-
         const diskPath = safeDestination(extractDir, normalized.path);
         await mkdir(path.dirname(diskPath), { recursive: true });
         const stream = await readZipEntry(zipFile, entry);
@@ -183,23 +272,13 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
   const pageFiles = files.filter((file) => file.isPageCandidate);
   const nestedZips = files.filter((file) => isZipPath(file.sourcePath));
   if (pageFiles.length === 0 && nestedZips.length > 0 && depth < maxNestedZipDepth) {
-    const nestedResults = await Promise.all(
-      nestedZips.map((file) => extractAndScanZip(file.diskPath, path.join(extractDir, `${path.basename(file.sourcePath)}-extract`), workspaceId, depth + 1))
-    );
+    const nestedResults = await Promise.all(nestedZips.map((file) => extractAndScanZip(file.diskPath, path.join(extractDir, `${path.basename(file.sourcePath)}-extract`), workspaceId, depth + 1)));
     const merged = mergeScanResults(nestedResults);
     if (merged.pages.length > 0 || merged.assets.length > 0) {
       return {
         ...merged,
         totalSizeBytes: totalSizeBytes + merged.totalSizeBytes,
-        issues: [
-          {
-            sourcePath: null,
-            severity: "warning",
-            code: "nested_zip_export",
-            message: "Detected a Notion export nested inside the uploaded zip and scanned the inner archive."
-          },
-          ...merged.issues
-        ]
+        issues: [{ sourcePath: null, severity: "warning", code: "nested_zip_export", message: "Detected a Notion export nested inside the uploaded zip and scanned the inner archive." }, ...merged.issues]
       };
     }
   }
@@ -216,106 +295,64 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
       assetPaths: []
     }))
   );
-
-  const assets = files
-    .filter((file) => file.isAssetCandidate)
-    .map((file) => ({
-      sourcePath: file.sourcePath,
-      originalFilename: file.sourcePath.split("/").pop() ?? file.sourcePath,
-      mimeType: file.mimeType,
-      sizeBytes: file.sizeBytes,
-      kind: file.kind
-    }));
-
-  if (databaseCount > 0) {
-    issues.push({
-      sourcePath: null,
-      severity: "warning",
-      code: "databases_preview_only",
-      message: "CSV database exports are detected, but database import is not enabled in this milestone."
-    });
-  }
-  if (unsupportedCount > 0) {
-    issues.push({
-      sourcePath: null,
-      severity: "warning",
-      code: "generic_files_detected",
-      message: "Some files are not page, image, PDF, or CSV assets and will need review before full import."
-    });
-  }
-
+  const assets = files.filter((file) => file.isAssetCandidate).map((file) => ({ sourcePath: file.sourcePath, originalFilename: file.sourcePath.split("/").pop() ?? file.sourcePath, mimeType: file.mimeType, sizeBytes: file.sizeBytes, kind: file.kind }));
+  if (databaseCount > 0) issues.push({ sourcePath: null, severity: "warning", code: "databases_preview_only", message: "CSV database exports are detected, but database import is not enabled in this milestone." });
+  if (unsupportedCount > 0) issues.push({ sourcePath: null, severity: "warning", code: "generic_files_detected", message: "Some files are not page, image, PDF, or CSV assets and will need review before full import." });
   return { files, pages, assets, issues, totalSizeBytes, unsupportedCount, databaseCount };
 }
 
-function buildPreview(job: typeof importJobs.$inferSelect, pages: NotionImportPagePreview[], assets: NotionImportAssetPreview[], issues: NotionImportIssue[]): NotionImportPreview {
+function buildPreview(job: ImportJobRow, pages: NotionImportPagePreview[], assets: NotionImportAssetPreview[], issues: NotionImportIssue[], applyResult?: NotionImportApplyResult): NotionImportPreview {
+  const addPages = pages.filter((page) => page.action === "add").length;
+  const skipPages = pages.filter((page) => page.action === "skip").length;
   return {
     importId: job.id,
     status: job.status,
     originalFilename: job.originalFilename,
-    counts: {
-      fileCount: job.fileCount,
-      pageCount: job.pageCount,
-      assetCount: job.assetCount,
-      databaseCount: job.databaseCount,
-      unsupportedCount: job.unsupportedCount,
-      totalSizeBytes: job.totalSizeBytes,
-      errorCount: job.errorCount
-    },
+    counts: { fileCount: job.fileCount, pageCount: job.pageCount, assetCount: job.assetCount, databaseCount: job.databaseCount, unsupportedCount: job.unsupportedCount, totalSizeBytes: job.totalSizeBytes, errorCount: job.errorCount },
     pages: pages.slice(0, maxPreviewRows),
     assets: assets.slice(0, maxPreviewRows),
     issues,
-    warnings: issues.filter((issue) => issue.severity === "warning").map((issue) => issue.message)
+    warnings: issues.filter((issue) => issue.severity === "warning").map((issue) => issue.message),
+    diff: { addPages, skipPages, addAssets: assets.length },
+    applyResult
   };
+}
+
+async function previewFromRows(job: ImportJobRow, applyResult?: NotionImportApplyResult): Promise<NotionImportPreview> {
+  const [pageRows, assetRows, errorRows] = await Promise.all([
+    db.select().from(importPages).where(eq(importPages.importJobId, job.id)),
+    db.select().from(importAssets).where(eq(importAssets.importJobId, job.id)),
+    db.select().from(importErrors).where(eq(importErrors.importJobId, job.id))
+  ]);
+  const pagePreviews = pageRows.map(importPagePreviewFromRow);
+  const stagedPages = await stageImportPages(job.workspaceId, pagePreviews);
+  const assets = assetRows.map((asset) => ({ sourcePath: asset.sourcePath, originalFilename: asset.originalFilename ?? asset.sourcePath, mimeType: asset.mimeType ?? "application/octet-stream", sizeBytes: asset.sizeBytes, kind: asset.kind }));
+  const issues = errorRows.map((error) => ({ sourcePath: error.sourcePath, severity: error.severity, code: error.code, message: error.message }));
+  return buildPreview(job, stagedPages, assets, issues, applyResult);
 }
 
 async function loadPreview(importId: string, request: FastifyRequest): Promise<NotionImportPreview> {
   const [job] = await db.select().from(importJobs).where(eq(importJobs.id, importId)).limit(1);
   if (!job) throw Object.assign(new Error("Import not found"), { statusCode: 404 });
   await requireWorkspaceRole(request, job.workspaceId);
-  if (job.previewJson) {
-    const preview = JSON.parse(job.previewJson) as NotionImportPreview;
-    return {
-      ...preview,
-      status: job.status,
-      originalFilename: job.originalFilename,
-      counts: {
-        fileCount: job.fileCount,
-        pageCount: job.pageCount,
-        assetCount: job.assetCount,
-        databaseCount: job.databaseCount,
-        unsupportedCount: job.unsupportedCount,
-        totalSizeBytes: job.totalSizeBytes,
-        errorCount: job.errorCount
-      }
-    };
-  }
+  if (job.previewJson && job.status !== "preview_ready") return { ...(JSON.parse(job.previewJson) as NotionImportPreview), status: job.status };
+  return previewFromRows(job);
+}
 
-  const [pageRows, assetRows, errorRows] = await Promise.all([
-    db.select().from(importPages).where(eq(importPages.importJobId, importId)).limit(maxPreviewRows),
-    db.select().from(importAssets).where(eq(importAssets.importJobId, importId)).limit(maxPreviewRows),
-    db.select().from(importErrors).where(eq(importErrors.importJobId, importId))
-  ]);
-  return buildPreview(
-    job,
-    pageRows.map((page) => ({
-      sourcePath: page.sourcePath,
-      sourceIdGuess: page.sourceIdGuess,
-      title: page.title,
-      parentSourcePath: page.parentSourcePath,
-      htmlPath: page.htmlPath ?? undefined,
-      markdownPath: page.markdownPath ?? undefined,
-      csvPath: page.csvPath ?? undefined,
-      assetPaths: JSON.parse(page.assetPaths) as string[]
-    })),
-    assetRows.map((asset) => ({
-      sourcePath: asset.sourcePath,
-      originalFilename: asset.originalFilename ?? asset.sourcePath,
-      mimeType: asset.mimeType ?? "application/octet-stream",
-      sizeBytes: asset.sizeBytes,
-      kind: asset.kind
-    })),
-    errorRows.map((error) => ({ sourcePath: error.sourcePath, severity: error.severity, code: error.code, message: error.message }))
-  );
+function contentFilePath(job: ImportJobRow, row: ImportPageRow): string | null {
+  const stored = row.htmlPath ?? row.markdownPath;
+  if (!stored) return null;
+  if (path.isAbsolute(stored)) return stored;
+  if (!job.tempStoragePath) return null;
+  return path.join(job.tempStoragePath, "extract", stored);
+}
+
+async function documentHtmlForRow(job: ImportJobRow, row: ImportPageRow): Promise<string> {
+  const filePath = contentFilePath(job, row);
+  if (!filePath) return `<h1>${escapeHtml(row.title)}</h1>`;
+  const raw = await readFile(filePath, "utf8");
+  if (row.htmlPath) return cleanImportedHtml(raw) || `<h1>${escapeHtml(row.title)}</h1>`;
+  return `<pre>${escapeHtml(raw)}</pre>`;
 }
 
 export async function importRoutes(app: FastifyInstance) {
@@ -326,97 +363,38 @@ export async function importRoutes(app: FastifyInstance) {
     const query = uploadQuerySchema.parse(request.query);
     const role = await requireWorkspaceRole(request, query.workspaceId);
     if (role !== "owner") throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
-
     const file = await (request as ImportUploadRequest).file();
     if (!file) throw Object.assign(new Error("Zip file is required"), { statusCode: 400 });
-    if (!file.filename.toLowerCase().endsWith(".zip")) {
-      throw Object.assign(new Error("Notion export must be a .zip file"), { statusCode: 400 });
-    }
+    if (!file.filename.toLowerCase().endsWith(".zip")) throw Object.assign(new Error("Notion export must be a .zip file"), { statusCode: 400 });
 
     const importId = randomUUID();
     const importRoot = path.join(tmpdir(), "notes-imports", importId);
     const zipPath = path.join(importRoot, "source.zip");
     const extractDir = path.join(importRoot, "extract");
     await mkdir(importRoot, { recursive: true });
-
-    await db.insert(importJobs).values({
-      id: importId,
-      workspaceId: query.workspaceId,
-      uploadedBy: auth.userId,
-      status: "uploaded",
-      originalFilename: file.filename,
-      tempStoragePath: importRoot
-    });
+    await db.insert(importJobs).values({ id: importId, workspaceId: query.workspaceId, uploadedBy: auth.userId, status: "uploaded", originalFilename: file.filename, tempStoragePath: importRoot });
 
     try {
       await pipeline(file.file, createWriteStream(zipPath, { flags: "wx" }));
       await db.update(importJobs).set({ status: "extracting", tempStoragePath: importRoot, updatedAt: new Date() }).where(eq(importJobs.id, importId));
       const scan = await extractAndScanZip(zipPath, extractDir, query.workspaceId);
       await db.update(importJobs).set({ status: "scanning", updatedAt: new Date() }).where(eq(importJobs.id, importId));
+      const fileBySource = new Map(scan.files.map((entry) => [entry.sourcePath, entry]));
+      if (scan.pages.length > 0) await db.insert(importPages).values(scan.pages.map((page) => {
+        const fileEntry = fileBySource.get(page.sourcePath);
+        return { importJobId: importId, sourcePath: page.sourcePath, sourceIdGuess: page.sourceIdGuess, title: page.title, parentSourcePath: page.parentSourcePath, htmlPath: page.htmlPath ? fileEntry?.diskPath ?? page.htmlPath : undefined, markdownPath: page.markdownPath ? fileEntry?.diskPath ?? page.markdownPath : undefined, csvPath: page.csvPath, assetPaths: JSON.stringify(page.assetPaths) };
+      }));
+      if (scan.assets.length > 0) await db.insert(importAssets).values(scan.assets.map((asset) => ({ importJobId: importId, sourcePath: asset.sourcePath, originalFilename: asset.originalFilename, mimeType: asset.mimeType, sizeBytes: asset.sizeBytes, kind: asset.kind })));
+      if (scan.issues.length > 0) await db.insert(importErrors).values(scan.issues.map((issue) => ({ importJobId: importId, ...issue })));
 
-      if (scan.pages.length > 0) {
-        await db.insert(importPages).values(
-          scan.pages.map((page) => ({
-            importJobId: importId,
-            sourcePath: page.sourcePath,
-            sourceIdGuess: page.sourceIdGuess,
-            title: page.title,
-            parentSourcePath: page.parentSourcePath,
-            htmlPath: page.htmlPath,
-            markdownPath: page.markdownPath,
-            csvPath: page.csvPath,
-            assetPaths: JSON.stringify(page.assetPaths)
-          }))
-        );
-      }
-      if (scan.assets.length > 0) {
-        await db.insert(importAssets).values(
-          scan.assets.map((asset) => ({
-            importJobId: importId,
-            sourcePath: asset.sourcePath,
-            originalFilename: asset.originalFilename,
-            mimeType: asset.mimeType,
-            sizeBytes: asset.sizeBytes,
-            kind: asset.kind
-          }))
-        );
-      }
-      if (scan.issues.length > 0) {
-        await db.insert(importErrors).values(scan.issues.map((issue) => ({ importJobId: importId, ...issue })));
-      }
-
-      const [updatedJob] = await db
-        .update(importJobs)
-        .set({
-          status: "preview_ready",
-          fileCount: scan.files.length,
-          pageCount: scan.pages.length,
-          assetCount: scan.assets.length,
-          databaseCount: scan.databaseCount,
-          unsupportedCount: scan.unsupportedCount,
-          totalSizeBytes: scan.totalSizeBytes,
-          errorCount: scan.issues.filter((issue) => issue.severity === "error").length,
-          updatedAt: new Date()
-        })
-        .where(eq(importJobs.id, importId))
-        .returning();
-      const preview = buildPreview(updatedJob, scan.pages, scan.assets, scan.issues);
+      const [updatedJob] = await db.update(importJobs).set({ status: "preview_ready", fileCount: scan.files.length, pageCount: scan.pages.length, assetCount: scan.assets.length, databaseCount: scan.databaseCount, unsupportedCount: scan.unsupportedCount, totalSizeBytes: scan.totalSizeBytes, errorCount: scan.issues.filter((issue) => issue.severity === "error").length, updatedAt: new Date() }).where(eq(importJobs.id, importId)).returning();
+      const preview = await previewFromRows(updatedJob);
       await db.update(importJobs).set({ previewJson: JSON.stringify(preview), updatedAt: new Date() }).where(eq(importJobs.id, importId));
       return { preview };
     } catch (error) {
-      const issue = {
-        importJobId: importId,
-        sourcePath: null,
-        severity: "error" as const,
-        code: error instanceof Error && "code" in error ? String((error as Error & { code?: unknown }).code) : "scan_failed",
-        message: error instanceof Error ? error.message : "Import preview failed"
-      };
+      const issue = { importJobId: importId, sourcePath: null, severity: "error" as const, code: error instanceof Error && "code" in error ? String((error as Error & { code?: unknown }).code) : "scan_failed", message: error instanceof Error ? error.message : "Import preview failed" };
       await db.insert(importErrors).values(issue);
-      const [failedJob] = await db
-        .update(importJobs)
-        .set({ status: "failed", errorCount: 1, updatedAt: new Date() })
-        .where(eq(importJobs.id, importId))
-        .returning();
+      const [failedJob] = await db.update(importJobs).set({ status: "failed", errorCount: 1, updatedAt: new Date() }).where(eq(importJobs.id, importId)).returning();
       const preview = buildPreview(failedJob, [], [], [{ sourcePath: null, severity: "error", code: issue.code, message: issue.message }]);
       await db.update(importJobs).set({ previewJson: JSON.stringify(preview), updatedAt: new Date() }).where(eq(importJobs.id, importId));
       return { preview };
@@ -447,12 +425,55 @@ export async function importRoutes(app: FastifyInstance) {
   });
 
   app.post("/:importId/run", async (request) => {
-    await requireAuth(request);
+    const auth = await requireAuth(request);
     const params = importParamsSchema.parse(request.params);
     const [job] = await db.select().from(importJobs).where(eq(importJobs.id, params.importId)).limit(1);
     if (!job) throw Object.assign(new Error("Import not found"), { statusCode: 404 });
     const role = await requireWorkspaceRole(request, job.workspaceId);
     if (role !== "owner") throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
-    throw Object.assign(new Error("Notion import run is not implemented yet; preview is the only enabled milestone."), { statusCode: 501 });
+    if (job.status !== "preview_ready" && job.status !== "completed") throw Object.assign(new Error("Import must be previewed before it can be applied."), { statusCode: 409 });
+    if (job.status === "completed") return { preview: await loadPreview(params.importId, request), result: { importId: params.importId, status: "completed", addedPages: 0, skippedPages: 0, errorCount: 0, rootPageId: null, addedPageIds: [] }, documents: [] };
+
+    await db.update(importJobs).set({ status: "importing_metadata", updatedAt: new Date() }).where(eq(importJobs.id, params.importId));
+    const importRows = orderedImportRows(await db.select().from(importPages).where(eq(importPages.importJobId, params.importId)));
+    const existingPages = await activePagesForWorkspace(job.workspaceId);
+    const existingByParentAndTitle = new Map(existingPages.map((page) => [childKey(page.parentPageId, page.title), page]));
+    let rootPage = existingByParentAndTitle.get(childKey(null, importRootTitle));
+    const sourceToPageId = new Map<string, string>();
+    const addedPageIds: string[] = [];
+    const documents: ImportedDocumentPayload[] = [];
+    let addedPages = 0;
+    let skippedPages = 0;
+
+    if (importRows.length > 0 && !rootPage) {
+      const [createdRoot] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId: null, title: importRootTitle, icon: null, sortOrder: String(Date.now()), createdBy: auth.userId, updatedBy: auth.userId }).returning();
+      rootPage = createdRoot;
+      addedPageIds.push(createdRoot.id);
+      addedPages += 1;
+      existingByParentAndTitle.set(childKey(null, importRootTitle), createdRoot);
+    }
+
+    for (let index = 0; index < importRows.length; index += 1) {
+      const row = importRows[index]!;
+      const parentPageId = row.parentSourcePath ? sourceToPageId.get(row.parentSourcePath) ?? rootPage?.id ?? null : rootPage?.id ?? null;
+      const existing = existingByParentAndTitle.get(childKey(parentPageId, row.title));
+      if (existing) {
+        sourceToPageId.set(row.sourcePath, existing.id);
+        skippedPages += 1;
+        continue;
+      }
+      const [created] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId, title: normalizeDbTitle(row.title), icon: null, sortOrder: String(Date.now() + index + 1), createdBy: auth.userId, updatedBy: auth.userId }).returning();
+      sourceToPageId.set(row.sourcePath, created.id);
+      existingByParentAndTitle.set(childKey(parentPageId, created.title), created);
+      addedPageIds.push(created.id);
+      addedPages += 1;
+      documents.push({ pageId: created.id, sourcePath: row.sourcePath, title: created.title, html: await documentHtmlForRow(job, row) });
+    }
+
+    const result: NotionImportApplyResult = { importId: params.importId, status: "completed", addedPages, skippedPages, errorCount: 0, rootPageId: rootPage?.id ?? null, addedPageIds };
+    const [completedJob] = await db.update(importJobs).set({ status: "completed", updatedAt: new Date() }).where(eq(importJobs.id, params.importId)).returning();
+    const preview = await previewFromRows(completedJob, result);
+    await db.update(importJobs).set({ previewJson: JSON.stringify(preview), updatedAt: new Date() }).where(eq(importJobs.id, params.importId));
+    return { preview, result, documents };
   });
 }
