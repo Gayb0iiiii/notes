@@ -18,15 +18,15 @@ import { eq } from "drizzle-orm";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import yauzl, { type Entry, type ZipFile } from "yauzl";
 import { z } from "zod";
 import { requireAuth, requireWorkspaceRole } from "../auth/session";
-import { db, pool } from "../db/client";
-import { importAssets, importErrors, importJobs, importPages, pages as pageTable } from "../db/schema";
+import { db } from "../db/client";
+import { importAssets, importErrors, importJobs, importPages, pageDocuments, pageUpdates, pages as pageTable } from "../db/schema";
 import { htmlToYjsUpdate } from "../imports/yjsDocument";
 
 const uploadQuerySchema = z.object({ workspaceId: z.string().uuid() });
@@ -36,7 +36,9 @@ const maxHtmlTitleBytes = 512 * 1024;
 const maxNestedZipDepth = 2;
 const importRootTitle = "Imported from Notion";
 const virtualFolderPrefix = "__folder__/";
-const maxInlineAssetBytes = 32 * 1024 * 1024;
+// 1MB ceiling for base64-inlined assets. 32MB would produce a ~43MB string
+// embedded directly in a YJS document, making the document unusably large.
+const maxInlineAssetBytes = 1 * 1024 * 1024;
 
 type PageRow = typeof pageTable.$inferSelect;
 type ImportJobRow = typeof importJobs.$inferSelect;
@@ -499,23 +501,48 @@ async function documentHtmlForRow(job: ImportJobRow, row: ImportPageRow): Promis
   return rewriteImportedAssetRefs(markdownToHtml(raw), baseDir);
 }
 
+/**
+ * Write a YJS document state and its initial update record inside a single
+ * Drizzle transaction. Using db.transaction() instead of raw pool.query("begin")
+ * ensures Drizzle manages the connection lifecycle and the rollback is
+ * guaranteed even if the process crashes mid-write.
+ */
 async function persistImportedDocument(input: { pageId: string; workspaceId: string; userId: string; html: string }): Promise<void> {
   const state = htmlToYjsUpdate(input.html);
-  await pool.query("begin");
-  try {
-    await pool.query("insert into page_updates (page_id, workspace_id, user_id, update_binary) values ($1, $2, $3, $4)", [input.pageId, input.workspaceId, input.userId, state]);
-    await pool.query(
-      `insert into page_documents (page_id, workspace_id, yjs_state, version, updated_at)
-       values ($1, $2, $3, 1, now())
-       on conflict (page_id)
-       do update set yjs_state = excluded.yjs_state, version = page_documents.version + 1, updated_at = now()`,
-      [input.pageId, input.workspaceId, state]
-    );
-    await pool.query("commit");
-  } catch (error) {
-    await pool.query("rollback");
-    throw error;
-  }
+  await db.transaction(async (tx) => {
+    await tx.insert(pageUpdates).values({
+      pageId: input.pageId,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      updateBinary: state
+    });
+    await tx
+      .insert(pageDocuments)
+      .values({
+        pageId: input.pageId,
+        workspaceId: input.workspaceId,
+        yjsState: state,
+        version: 1
+      })
+      .onConflictDoUpdate({
+        target: pageDocuments.pageId,
+        set: {
+          yjsState: state,
+          version: pageDocuments.version,
+          updatedAt: new Date()
+        }
+      });
+  });
+}
+
+/**
+ * Remove the temporary extraction directory for an import job.
+ * Called after run() completes or fails to prevent /tmp from filling up.
+ * Errors are swallowed — a failed cleanup should never surface to the client.
+ */
+async function cleanupImportDir(job: ImportJobRow): Promise<void> {
+  if (!job.tempStoragePath) return;
+  await rm(job.tempStoragePath, { recursive: true, force: true }).catch(() => undefined);
 }
 
 export async function importRoutes(app: FastifyInstance) {
@@ -570,10 +597,16 @@ export async function importRoutes(app: FastifyInstance) {
     return { preview: await loadPreview(params.importId, request) };
   });
 
+  // Lightweight polling endpoint — returns just enough for the client to know
+  // whether to keep polling, without fetching the full preview on every tick.
+  // Previously this was identical to /:importId/preview (dead code).
   app.get("/:importId/status", async (request) => {
     await requireAuth(request);
     const params = importParamsSchema.parse(request.params);
-    return { preview: await loadPreview(params.importId, request) };
+    const [job] = await db.select({ id: importJobs.id, status: importJobs.status, errorCount: importJobs.errorCount }).from(importJobs).where(eq(importJobs.id, params.importId)).limit(1);
+    if (!job) throw Object.assign(new Error("Import not found"), { statusCode: 404 });
+    await requireWorkspaceRole(request, (await db.select({ workspaceId: importJobs.workspaceId }).from(importJobs).where(eq(importJobs.id, params.importId)).limit(1))[0]!.workspaceId);
+    return { importId: job.id, status: job.status, errorCount: job.errorCount };
   });
 
   app.post("/:importId/cancel", async (request) => {
@@ -609,7 +642,9 @@ export async function importRoutes(app: FastifyInstance) {
     let skippedPages = 0;
 
     if (importRows.length > 0 && !rootPage) {
-      const [createdRoot] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId: null, title: importRootTitle, icon: null, sortOrder: String(Date.now()), createdBy: auth.userId, updatedBy: auth.userId }).returning();
+      // Pass Date.now() as a number — sortOrder is a numeric column; String() causes
+      // lexicographic ordering bugs once values exceed a single digit.
+      const [createdRoot] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId: null, title: importRootTitle, icon: null, sortOrder: Date.now(), createdBy: auth.userId, updatedBy: auth.userId }).returning();
       rootPage = createdRoot;
       addedPageIds.push(createdRoot.id);
       addedPages += 1;
@@ -628,7 +663,7 @@ export async function importRoutes(app: FastifyInstance) {
         skippedPages += 1;
         continue;
       }
-      const [created] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId, title: normalizeDbTitle(row.title), icon: null, sortOrder: String(Date.now() + index + 1), createdBy: auth.userId, updatedBy: auth.userId }).returning();
+      const [created] = await db.insert(pageTable).values({ id: randomUUID(), workspaceId: job.workspaceId, parentPageId, title: normalizeDbTitle(row.title), icon: null, sortOrder: Date.now() + index + 1, createdBy: auth.userId, updatedBy: auth.userId }).returning();
       sourceToPageId.set(row.sourcePath, created.id);
       existingByParentAndTitle.set(childKey(parentPageId, created.title), created);
       addedPageIds.push(created.id);
@@ -642,6 +677,8 @@ export async function importRoutes(app: FastifyInstance) {
     const [completedJob] = await db.update(importJobs).set({ status: "completed", updatedAt: new Date() }).where(eq(importJobs.id, params.importId)).returning();
     const preview = await previewFromRows(completedJob, result);
     await db.update(importJobs).set({ previewJson: JSON.stringify(preview), updatedAt: new Date() }).where(eq(importJobs.id, params.importId));
+    // Clean up extracted files from /tmp now that the import is complete.
+    await cleanupImportDir(completedJob);
     return { preview, result, documents };
   });
 }
