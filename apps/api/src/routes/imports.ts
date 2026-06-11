@@ -3,7 +3,6 @@ import {
   NOTION_IMPORT_MAX_FILE_COUNT,
   NOTION_IMPORT_MAX_SINGLE_FILE_BYTES,
   NOTION_IMPORT_MAX_TOTAL_BYTES,
-  basenameWithoutImportExtension,
   classifyNotionImportFile,
   deriveParentSourcePath,
   extractHtmlTitle,
@@ -15,7 +14,7 @@ import {
   type NotionImportPreview
 } from "@notes/shared";
 import { eq } from "drizzle-orm";
-import type { FastifyInstance, FastifyPluginCallback, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { createHash, randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import { mkdir, readFile, stat } from "node:fs/promises";
@@ -30,10 +29,8 @@ import { importAssets, importErrors, importJobs, importPages } from "../db/schem
 
 const uploadQuerySchema = z.object({ workspaceId: z.string().uuid() });
 const importParamsSchema = z.object({ importId: z.string().uuid() });
-const maxUploadBytes = NOTION_IMPORT_MAX_TOTAL_BYTES;
 const maxPreviewRows = 50;
 const maxHtmlTitleBytes = 512 * 1024;
-const multipartPlugin = multipart as unknown as FastifyPluginCallback;
 
 interface ExtractedFile {
   sourcePath: string;
@@ -69,8 +66,8 @@ function openZip(zipPath: string): Promise<ZipFile> {
   });
 }
 
-function readZipEntry(zipFile: ZipFile, entry: Entry) {
-  return new Promise<NodeJS.ReadableStream>((resolve, reject) => {
+function readZipEntry(zipFile: ZipFile, entry: Entry): Promise<NodeJS.ReadableStream> {
+  return new Promise((resolve, reject) => {
     zipFile.openReadStream(entry, (error, stream) => {
       if (error) reject(error);
       else if (!stream) reject(new Error("Could not read zip entry"));
@@ -279,7 +276,7 @@ async function loadPreview(importId: string, request: FastifyRequest): Promise<N
 }
 
 export async function importRoutes(app: FastifyInstance) {
-  await app.register(multipartPlugin, { limits: { files: 1, fileSize: maxUploadBytes, fields: 0 } });
+  await app.register(multipart as never, { limits: { files: 1, fileSize: NOTION_IMPORT_MAX_TOTAL_BYTES, fields: 0 } } as never);
 
   app.post("/notion/upload", async (request) => {
     const auth = await requireAuth(request);
