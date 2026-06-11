@@ -30,6 +30,7 @@ import type { PageDto } from "@notes/shared";
 import { queueOrUploadAsset } from "../lib/assets";
 import { localDb } from "../lib/localDb";
 import { usePageDocument } from "./usePageDocument";
+import { TablePopover } from "./TablePopover";
 
 interface NotesEditorProps {
   workspaceId: string;
@@ -70,8 +71,6 @@ function escapeHtml(value: string): string {
 
 export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
   const { ydoc, connected, localReady } = usePageDocument(workspaceId, page.id);
-  const [tableLength, setTableLength] = useState(3);
-  const [tableWidth, setTableWidth] = useState(4);
   const [selectedImageWidth, setSelectedImageWidth] = useState("100%");
   const [assetError, setAssetError] = useState<string | null>(null);
   const initializedPageId = useRef<string | null>(null);
@@ -277,28 +276,7 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
           </button>
         </div>
 
-        <div className="toolbar-group table-insert-controls">
-          <label title="Table length">
-            <span>L</span>
-            <input type="number" min={1} max={20} value={tableLength} onChange={(event) => setTableLength(clampNumber(Number(event.target.value), 1, 20))} />
-          </label>
-          <label title="Table width">
-            <span>W</span>
-            <input type="number" min={1} max={12} value={tableWidth} onChange={(event) => setTableWidth(clampNumber(Number(event.target.value), 1, 12))} />
-          </label>
-          <button type="button" title="Insert table" onMouseDown={toolbarAction(() => editor?.chain().focus().insertTable({ rows: tableLength, cols: tableWidth, withHeaderRow: true }).run())}>
-            <TableIcon size={16} />
-          </button>
-          <button type="button" title="Add row" disabled={!editor?.isActive("table")} onMouseDown={toolbarAction(() => editor?.chain().focus().addRowAfter().run())}>
-            <Plus size={16} />
-          </button>
-          <button type="button" title="Add column" disabled={!editor?.isActive("table")} onMouseDown={toolbarAction(() => editor?.chain().focus().addColumnAfter().run())}>
-            <TableIcon size={16} />
-          </button>
-          <button type="button" title="Delete table" disabled={!editor?.isActive("table")} onMouseDown={toolbarAction(() => editor?.chain().focus().deleteTable().run())}>
-            <Trash2 size={16} />
-          </button>
-        </div>
+        <TablePopover editor={editor} run={run} />
 
         <div className="toolbar-group image-controls" aria-label="Selected image size">
           <label className="icon-upload" title="Photo or PDF">
@@ -320,8 +298,6 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
           <button type="button" className={selectedImageWidth === "75%" ? "active text-tool" : "text-tool"} title="Image width 75%" disabled={!editor?.isActive("image")} onMouseDown={toolbarAction(() => applySelectedImageWidth("75%"))}>75</button>
           <button type="button" className={selectedImageWidth === "100%" ? "active text-tool" : "text-tool"} title="Image width 100%" disabled={!editor?.isActive("image")} onMouseDown={toolbarAction(() => applySelectedImageWidth("100%"))}>100</button>
         </div>
-
-        <span className="connection-dot" data-connected={connected}>{connected ? "Live" : localReady ? "Local" : "Loading"}</span>
       </div>
       {assetError ? <p className="editor-error">{assetError}</p> : null}
       <EditorContent editor={editor} />

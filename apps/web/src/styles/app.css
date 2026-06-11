@@ -46,14 +46,14 @@ button:disabled {
 .app-shell {
   min-height: 100dvh;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 260px minmax(0, 1fr);
   background: #090d16;
 }
 
 .sidebar {
   border-right: 1px solid #273246;
   background: #101827;
-  padding: calc(14px + var(--safe-area-top)) 10px calc(14px + var(--safe-area-bottom)) calc(10px + var(--safe-area-left));
+  padding: calc(12px + var(--safe-area-top)) 8px calc(12px + var(--safe-area-bottom)) calc(8px + var(--safe-area-left));
   overflow-y: auto;
 }
 
@@ -63,21 +63,23 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
 }
 
 .sidebar-header {
-  min-height: 38px;
-  padding: 0 6px 10px;
+  min-height: 34px;
+  padding: 0 4px 8px;
 }
 
+/* ── Sidebar tree density ─────────────────────────────────────── */
 .tree-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px 28px 28px 28px;
+  grid-template-columns: minmax(0, 1fr) 24px 24px 24px 24px;
   align-items: center;
-  min-height: 32px;
-  border-radius: 6px;
+  min-height: 26px;
+  border-radius: 5px;
   color: #cbd5e1;
+  font-size: 13px;
 }
 
 .tree-row:hover,
@@ -90,17 +92,21 @@ button:disabled {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+  padding: 0 2px;
 }
 
 .page-title-input {
   width: 100%;
   min-width: 0;
-  height: 26px;
+  height: 24px;
   border: 1px solid #334155;
   border-radius: 5px;
   background: #0b1220;
   color: #e5e7eb;
   padding: 0 6px;
+  font-size: 13px;
 }
 
 .delete-dialog-backdrop {
@@ -200,8 +206,7 @@ button:disabled {
   font-size: 13px;
 }
 
-.sync-status,
-.connection-dot {
+.sync-status {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
@@ -215,8 +220,7 @@ button:disabled {
 
 .sync-status[data-status="offline"],
 .sync-status[data-status="sync_error"],
-.sync-status[data-status="attention_required"],
-.connection-dot[data-connected="false"] {
+.sync-status[data-status="attention_required"] {
   background: #2a2110;
   color: #fbbf24;
 }
@@ -507,42 +511,49 @@ button:disabled {
   grid-template-rows: auto minmax(0, 1fr);
 }
 
+/* ── Editor toolbar ───────────────────────────────────────────── */
 .editor-toolbar {
   position: relative;
   z-index: 5;
   justify-content: flex-start;
   align-items: center;
-  flex-wrap: wrap;
+  /* Never wrap — groups scroll horizontally instead */
+  flex-wrap: nowrap;
+  gap: 6px;
   border-bottom: 1px solid #273246;
   background: #0d1422;
-  padding: 10px calc(clamp(16px, 4vw, 44px) + var(--safe-area-right)) 10px calc(clamp(16px, 4vw, 44px) + var(--safe-area-left));
+  padding: 8px calc(clamp(12px, 3vw, 32px) + var(--safe-area-right)) 8px calc(clamp(12px, 3vw, 32px) + var(--safe-area-left));
   overflow-x: auto;
   overflow-y: visible;
-  scrollbar-width: thin;
-  scrollbar-color: #475569 #0d1422;
+  /* Hide scrollbar visually but keep it functional */
+  scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+}
+
+.editor-toolbar::-webkit-scrollbar {
+  display: none;
 }
 
 .toolbar-group {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 6px;
+  gap: 4px;
   border: 1px solid #273246;
-  border-radius: 8px;
+  border-radius: 7px;
   background: #111827;
-  padding: 5px;
+  padding: 4px;
 }
 
 .editor-toolbar button,
 .icon-upload {
-  width: 38px;
-  height: 36px;
+  width: 34px;
+  height: 32px;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 5px;
   border: 1px solid transparent;
   color: #dbeafe;
   background: #172033;
@@ -572,45 +583,134 @@ button:disabled {
 }
 
 .editor-toolbar .text-tool {
-  min-width: 42px;
+  min-width: 38px;
   width: auto;
-  padding: 0 8px;
+  padding: 0 6px;
   font-size: 12px;
   font-weight: 800;
 }
 
+/* Table popover — no longer in main toolbar groups */
 .table-insert-controls {
-  min-height: 48px;
-}
-
-.table-insert-controls label {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: #cbd5e1;
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.table-insert-controls input {
-  width: 52px;
-  height: 36px;
-  border: 1px solid #334155;
-  border-radius: 5px;
-  background: #0b1220;
-  color: #e5e7eb;
-  padding: 0 6px;
-  text-align: center;
+  display: none;
 }
 
 .image-controls {
-  padding-right: 7px;
+  padding-right: 4px;
 }
 
 .icon-upload input {
   display: none;
 }
 
+/* ── Table popover ────────────────────────────────────────────── */
+.table-popover-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.table-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 50;
+  min-width: 180px;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  background: #111827;
+  padding: 10px;
+  box-shadow: 0 12px 36px rgb(0 0 0 / 40%);
+}
+
+.table-popover-label {
+  margin: 0 0 8px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.table-popover-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.table-popover-fields label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: #cbd5e1;
+}
+
+.table-popover-fields input {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #334155;
+  border-radius: 5px;
+  background: #0b1220;
+  color: #e5e7eb;
+  padding: 0 6px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.table-popover-insert {
+  width: 100%;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #2563eb;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+
+.table-popover-insert:hover {
+  background: #1d4ed8;
+}
+
+.table-popover-actions {
+  display: grid;
+  gap: 2px;
+}
+
+.table-popover-actions button {
+  width: 100%;
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 5px;
+  background: transparent;
+  color: #cbd5e1;
+  padding: 0 8px;
+  font-size: 13px;
+  text-align: left;
+  border: none;
+  cursor: pointer;
+}
+
+.table-popover-actions button:hover {
+  background: #1e293b;
+  color: #e5e7eb;
+}
+
+.table-popover-actions .table-popover-danger {
+  color: #fca5a5;
+}
+
+.table-popover-actions .table-popover-danger:hover {
+  background: #2a1015;
+}
+
+/* ── Editor errors & surface ──────────────────────────────────── */
 .editor-error {
   margin: 0;
   border-bottom: 1px solid #7f1d1d;
@@ -943,9 +1043,15 @@ button:disabled {
     z-index: 10;
     flex-wrap: nowrap;
     overflow-y: hidden;
-    padding-bottom: calc(8px + var(--safe-area-bottom));
+    padding-bottom: calc(6px + var(--safe-area-bottom));
     background: #0d1422;
     border-top: 1px solid #273246;
+  }
+
+  /* Table popover opens upward on mobile (toolbar is at bottom) */
+  .table-popover {
+    top: auto;
+    bottom: calc(100% + 8px);
   }
 
   .editor-surface {
