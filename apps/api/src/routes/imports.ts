@@ -31,6 +31,7 @@ const uploadQuerySchema = z.object({ workspaceId: z.string().uuid() });
 const importParamsSchema = z.object({ importId: z.string().uuid() });
 const maxPreviewRows = 50;
 const maxHtmlTitleBytes = 512 * 1024;
+const maxNestedZipDepth = 2;
 
 interface ExtractedFile {
   sourcePath: string;
@@ -89,6 +90,25 @@ function safeDestination(rootDir: string, sourcePath: string): string {
   return destination;
 }
 
+function isZipPath(sourcePath: string): boolean {
+  return sourcePath.toLowerCase().endsWith(".zip");
+}
+
+function mergeScanResults(results: ScanResult[]): ScanResult {
+  return results.reduce<ScanResult>(
+    (merged, result) => ({
+      files: [...merged.files, ...result.files],
+      pages: [...merged.pages, ...result.pages],
+      assets: [...merged.assets, ...result.assets],
+      issues: [...merged.issues, ...result.issues],
+      totalSizeBytes: merged.totalSizeBytes + result.totalSizeBytes,
+      unsupportedCount: merged.unsupportedCount + result.unsupportedCount,
+      databaseCount: merged.databaseCount + result.databaseCount
+    }),
+    { files: [], pages: [], assets: [], issues: [], totalSizeBytes: 0, unsupportedCount: 0, databaseCount: 0 }
+  );
+}
+
 async function titleForFile(file: ExtractedFile): Promise<string> {
   if (file.kind === "html" && file.sizeBytes <= maxHtmlTitleBytes) {
     const html = await readFile(file.diskPath, "utf8");
@@ -97,7 +117,7 @@ async function titleForFile(file: ExtractedFile): Promise<string> {
   return titleFromImportPath(file.sourcePath);
 }
 
-async function extractAndScanZip(zipPath: string, extractDir: string, workspaceId: string): Promise<ScanResult> {
+async function extractAndScanZip(zipPath: string, extractDir: string, workspaceId: string, depth = 0): Promise<ScanResult> {
   await mkdir(extractDir, { recursive: true });
   const zipFile = await openZip(zipPath);
   const files: ExtractedFile[] = [];
@@ -123,7 +143,7 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
         if (files.length + 1 > NOTION_IMPORT_MAX_FILE_COUNT) {
           throw Object.assign(new Error("Notion export contains too many files"), { code: "too_many_files" });
         }
-        if (entry.uncompressedSize > NOTION_IMPORT_MAX_SINGLE_FILE_BYTES) {
+        if (entry.uncompressedSize > NOTION_IMPORT_MAX_SINGLE_FILE_BYTES && !isZipPath(normalized.path)) {
           throw Object.assign(new Error("A single file in the export is too large"), { code: "single_file_too_large" });
         }
         if (totalSizeBytes + entry.uncompressedSize > NOTION_IMPORT_MAX_TOTAL_BYTES) {
@@ -131,7 +151,7 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
         }
 
         const classification = classifyNotionImportFile(normalized.path);
-        if (classification.kind === "file") unsupportedCount += 1;
+        if (classification.kind === "file" && !isZipPath(normalized.path)) unsupportedCount += 1;
         if (classification.kind === "csv") databaseCount += 1;
 
         const diskPath = safeDestination(extractDir, normalized.path);
@@ -147,7 +167,7 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
           kind: classification.kind,
           mimeType: classification.mimeType,
           isPageCandidate: classification.isPageCandidate,
-          isAssetCandidate: classification.isAssetCandidate
+          isAssetCandidate: classification.isAssetCandidate && !isZipPath(normalized.path)
         });
         zipFile.readEntry();
       } catch (error) {
@@ -161,6 +181,29 @@ async function extractAndScanZip(zipPath: string, extractDir: string, workspaceI
   });
 
   const pageFiles = files.filter((file) => file.isPageCandidate);
+  const nestedZips = files.filter((file) => isZipPath(file.sourcePath));
+  if (pageFiles.length === 0 && nestedZips.length > 0 && depth < maxNestedZipDepth) {
+    const nestedResults = await Promise.all(
+      nestedZips.map((file) => extractAndScanZip(file.diskPath, path.join(extractDir, `${path.basename(file.sourcePath)}-extract`), workspaceId, depth + 1))
+    );
+    const merged = mergeScanResults(nestedResults);
+    if (merged.pages.length > 0 || merged.assets.length > 0) {
+      return {
+        ...merged,
+        totalSizeBytes: totalSizeBytes + merged.totalSizeBytes,
+        issues: [
+          {
+            sourcePath: null,
+            severity: "warning",
+            code: "nested_zip_export",
+            message: "Detected a Notion export nested inside the uploaded zip and scanned the inner archive."
+          },
+          ...merged.issues
+        ]
+      };
+    }
+  }
+
   const pageSourcePaths = new Set(pageFiles.map((file) => file.sourcePath));
   const pages = await Promise.all(
     pageFiles.map(async (file) => ({
