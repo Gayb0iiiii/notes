@@ -97,7 +97,7 @@ export function NotesEditor({ workspaceId, page }: NotesEditorProps) {
   const editor = useEditor(
     {
       extensions,
-      autofocus: "end",
+      autofocus: false,
       editorProps: {
         attributes: {
           class: "prose editor-surface",
