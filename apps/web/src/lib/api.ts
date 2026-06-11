@@ -19,6 +19,9 @@ export interface PageHistoryRevision {
   id: string;
   editor: { userId: string; displayName: string };
   editedAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  updateCount?: number;
   additions: number;
   deletions: number;
   changeSizeBytes: number;
@@ -26,7 +29,9 @@ export interface PageHistoryRevision {
 
 export interface PageHistoryResponse {
   pageId: string;
-  lastEdited: { editor: { userId: string; displayName: string }; editedAt: string } | null;
+  windowDays?: number;
+  groupedByMinutes?: number;
+  lastEdited: { editor: { userId: string; displayName: string }; editedAt: string; updateCount?: number } | null;
   revisions: PageHistoryRevision[];
 }
 
