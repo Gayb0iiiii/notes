@@ -74,7 +74,8 @@ button:disabled {
 /* ── Sidebar tree density ─────────────────────────────────────── */
 .tree-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 24px 24px 24px 24px;
+  /* toggle | title (fills remaining space) | rename | new-child | archive | cancel(conditional) */
+  grid-template-columns: 20px minmax(0, 1fr) 24px 24px 24px 24px;
   align-items: center;
   min-height: 26px;
   border-radius: 5px;
@@ -87,13 +88,16 @@ button:disabled {
   background: #1e293b;
 }
 
+/* The title button is a direct grid child — flex properties have no effect
+   here. Use width: 100% + min-width: 0 so it fills exactly its grid cell
+   and text-overflow: ellipsis fires at the right point. */
 .page-title-button {
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
-  flex: 1;
   padding: 0 2px;
 }
 
