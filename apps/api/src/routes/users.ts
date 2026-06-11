@@ -16,13 +16,14 @@ const createUserSchema = z.object({
 });
 
 export const userRoutes: FastifyPluginAsync = async (app) => {
-  // workspaceId is a required query param — previously this guessed from ownerUserId
-  // which silently returned the wrong workspace for users who own multiple workspaces.
+  // Any authenticated workspace member can list users — the role check here
+  // only verifies membership (not ownership), so non-owner members (editors,
+  // guests, etc.) can still see who is in the workspace, which is required
+  // for share dialogs and people pickers on the client.
   app.get("/", async (request) => {
     await requireAuth(request);
     const query = z.object({ workspaceId: z.string().uuid() }).parse(request.query);
-    const role = await requireWorkspaceRole(request, query.workspaceId);
-    if (!canManageUsers(role)) throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
+    await requireWorkspaceRole(request, query.workspaceId);
     return db
       .select({
         id: users.id,
