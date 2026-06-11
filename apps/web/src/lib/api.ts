@@ -15,6 +15,21 @@ export interface AdminUser {
   lastLoginAt: string | null;
 }
 
+export interface PageHistoryRevision {
+  id: string;
+  editor: { userId: string; displayName: string };
+  editedAt: string;
+  additions: number;
+  deletions: number;
+  changeSizeBytes: number;
+}
+
+export interface PageHistoryResponse {
+  pageId: string;
+  lastEdited: { editor: { userId: string; displayName: string }; editedAt: string } | null;
+  revisions: PageHistoryRevision[];
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -297,6 +312,7 @@ export const notesApi = {
     api<{ ok: true }>(`/api/users/${userId}`, { method: "DELETE", body: JSON.stringify({ workspaceId }) }),
   workspaces: () => api<{ id: string; name: string; ownerUserId: string; role: string }[]>("/api/workspaces"),
   pages: (workspaceId: string) => api<{ pages: import("@notes/shared").PageDto[] }>(`/api/workspaces/${workspaceId}/pages`),
+  pageHistory: (pageId: string) => api<PageHistoryResponse>(`/api/pages/${pageId}/history`, {}, 15_000),
   syncMetadata: (operations: MetadataOperation[]) => api<{ results: unknown[] }>("/api/sync/metadata", { method: "POST", body: JSON.stringify({ operations }) }),
   uploadUrl: (input: { workspaceId: string; filename: string; mimeType: string; sizeBytes: number }) =>
     api<{ assetId: string; uploadUrl: string; storageKey: string }>("/api/assets/upload-url", { method: "POST", body: JSON.stringify(input) }),
