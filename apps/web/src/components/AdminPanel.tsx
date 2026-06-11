@@ -13,9 +13,11 @@ import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import type { AdminUser } from "../lib/api";
 import { notesApi } from "../lib/api";
+import { localDb } from "../lib/localDb";
 
 interface AdminPanelProps {
   workspaceId: string;
+  onImported?: () => void;
 }
 
 const initialForm = {
@@ -36,7 +38,19 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
-export function AdminPanel({ workspaceId }: AdminPanelProps) {
+function statusLabel(status: string): string {
+  return status.replace(/_/g, " ");
+}
+
+function importDiff(preview: NotionImportPreview): { addPages: number; skipPages: number; addAssets: number } {
+  return {
+    addPages: preview.diff?.addPages ?? preview.pages.filter((page) => page.action !== "skip").length,
+    skipPages: preview.diff?.skipPages ?? preview.pages.filter((page) => page.action === "skip").length,
+    addAssets: preview.diff?.addAssets ?? preview.assets.length
+  };
+}
+
+export function AdminPanel({ workspaceId, onImported }: AdminPanelProps) {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [form, setForm] = useState(initialForm);
   const [passwordDrafts, setPasswordDrafts] = useState<Record<string, string>>({});
@@ -131,6 +145,26 @@ export function AdminPanel({ workspaceId }: AdminPanelProps) {
       setImportPreview(result.preview);
     } catch {
       setImportError("Could not scan that Notion export. Use the HTML export zip with subpages and files included.");
+    } finally {
+      setImportBusy(false);
+    }
+  }
+
+  async function applyImport() {
+    if (!importPreview || importPreview.status !== "preview_ready") return;
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const result = await notesApi.runNotionImport(importPreview.importId);
+      const now = new Date().toISOString();
+      await Promise.all(result.documents.map((document) => localDb.localDocuments.put({ pageId: document.pageId, html: document.html, updatedAt: now })));
+      for (const document of result.documents) {
+        window.dispatchEvent(new CustomEvent("notes:document-snapshot", { detail: { pageId: document.pageId } }));
+      }
+      setImportPreview(result.preview);
+      onImported?.();
+    } catch {
+      setImportError("Could not apply this import. Existing notes were not changed.");
     } finally {
       setImportBusy(false);
     }
@@ -296,23 +330,29 @@ export function AdminPanel({ workspaceId }: AdminPanelProps) {
             </label>
             <button type="submit" disabled={importBusy || !importFile}>
               <Upload size={16} />
-              {importBusy ? "Scanning..." : "Scan export"}
+              {importBusy ? "Working..." : "Scan export"}
             </button>
           </form>
-          <p className="admin-muted">This only creates a safe preview. It does not create pages or import content yet.</p>
+          <p className="admin-muted">Git-style staged import: scan first, review add/skip results, then apply. Existing notes are never overwritten.</p>
           {importError ? <p className="admin-error">{importError}</p> : null}
           {importPreview ? (
             <div className="import-preview">
               <div className="import-status-row">
                 <strong>{importPreview.originalFilename ?? "Notion export"}</strong>
-                <span data-status={importPreview.status}>{importPreview.status.replace(/_/g, " ")}</span>
+                <span data-status={importPreview.status}>{statusLabel(importPreview.status)}</span>
               </div>
               <div className="import-counts">
-                <span><strong>{importPreview.counts.pageCount}</strong> pages</span>
-                <span><strong>{importPreview.counts.assetCount}</strong> assets</span>
-                <span><strong>{importPreview.counts.databaseCount}</strong> CSV databases</span>
+                <span><strong>{importPreview.counts.pageCount}</strong> pages scanned</span>
+                <span><strong>{importPreview.diff?.addPages ?? importPreview.counts.pageCount}</strong> to add</span>
+                <span><strong>{importPreview.diff?.skipPages ?? 0}</strong> skipped</span>
+                <span><strong>{importPreview.counts.assetCount}</strong> assets detected</span>
                 <span><strong>{formatBytes(importPreview.counts.totalSizeBytes)}</strong> extracted</span>
               </div>
+              {importPreview.applyResult ? (
+                <p className="import-applied-summary">
+                  Applied {importPreview.applyResult.addedPages} new pages and skipped {importPreview.applyResult.skippedPages} existing pages.
+                </p>
+              ) : null}
               {importPreview.issues.length > 0 ? (
                 <ul className="import-issues">
                   {importPreview.issues.slice(0, 4).map((issue) => (
@@ -322,18 +362,28 @@ export function AdminPanel({ workspaceId }: AdminPanelProps) {
               ) : null}
               {importPreview.pages.length > 0 ? (
                 <div className="import-sample">
-                  <strong>Page preview</strong>
-                  {importPreview.pages.slice(0, 8).map((page) => (
-                    <span key={page.sourcePath}>{page.title}</span>
+                  <strong>Staged page changes</strong>
+                  {importPreview.pages.slice(0, 12).map((page) => (
+                    <span key={page.sourcePath} data-action={page.action ?? "add"} title={page.path ?? page.sourcePath}>
+                      <b>{page.action === "skip" ? "=" : "+"}</b> {page.path ?? page.title}
+                    </span>
                   ))}
                 </div>
               ) : null}
-              {importPreview.status !== "cancelled" ? (
-                <button className="admin-secondary" type="button" onClick={() => void cancelImport()} disabled={importBusy}>
-                  <XCircle size={16} />
-                  Cancel job
-                </button>
-              ) : null}
+              <div className="import-actions">
+                {importPreview.status === "preview_ready" ? (
+                  <button className="admin-primary" type="button" onClick={() => void applyImport()} disabled={importBusy || (importDiff(importPreview).addPages === 0 && !importPreview.applyResult)}>
+                    <Upload size={16} />
+                    Apply staged import
+                  </button>
+                ) : null}
+                {importPreview.status !== "cancelled" && importPreview.status !== "completed" ? (
+                  <button className="admin-secondary" type="button" onClick={() => void cancelImport()} disabled={importBusy}>
+                    <XCircle size={16} />
+                    Cancel job
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : null}
         </section>
