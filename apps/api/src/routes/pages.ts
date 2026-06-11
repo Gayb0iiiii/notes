@@ -12,8 +12,8 @@ const createPageSchema = z.object({
   parentPageId: z.string().uuid().nullable().optional(),
   title: z.string().default("Untitled"),
   icon: z.string().nullable().optional(),
-  // sortOrder is a numeric column — pass the number directly, do NOT cast to String()
-  // so Postgres sorts correctly (string "10" < "9", number 10 > 9)
+  // sortOrder is a numeric() column — Drizzle types it as string to preserve
+  // arbitrary precision. Cast with String() at every insert/update site.
   sortOrder: z.number().default(0)
 });
 
@@ -163,7 +163,7 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
         parentPageId: body.parentPageId ?? null,
         title: normalizeTitle(body.title),
         icon: body.icon ?? null,
-        sortOrder: body.sortOrder,
+        sortOrder: String(body.sortOrder),
         createdBy: auth.userId,
         updatedBy: auth.userId
       })
@@ -205,7 +205,7 @@ export const pageRoutes: FastifyPluginAsync = async (app) => {
     if (existing.archivedAt) return reply.code(409).send({ error: "page_archived" });
     const [page] = await db
       .update(pages)
-      .set({ parentPageId: body.parentPageId, sortOrder: body.sortOrder, updatedBy: auth.userId, updatedAt: new Date() })
+      .set({ parentPageId: body.parentPageId, sortOrder: String(body.sortOrder), updatedBy: auth.userId, updatedAt: new Date() })
       .where(eq(pages.id, params.pageId))
       .returning();
     return { page: toPageDto(page) };

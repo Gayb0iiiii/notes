@@ -41,7 +41,7 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
         parentPageId: payload.parentPageId ?? null,
         title: normalizeTitle(payload.title),
         icon: payload.icon ?? null,
-        sortOrder: payload.sortOrder,
+        sortOrder: String(payload.sortOrder),
         createdBy: userId,
         updatedBy: userId
       })
@@ -70,7 +70,7 @@ async function applyOperation(userId: string, operation: z.infer<typeof operatio
       .update(pages)
       .set({
         parentPageId: payload.parentPageId === undefined ? existing.parentPageId : payload.parentPageId,
-        sortOrder: payload.sortOrder,
+        sortOrder: String(payload.sortOrder),
         updatedBy: userId,
         updatedAt: new Date()
       })
