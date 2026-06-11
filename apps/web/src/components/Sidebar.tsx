@@ -29,6 +29,13 @@ function stripHtml(html: string): string {
   return html.replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function blurActiveTextInput() {
+  const activeElement = document.activeElement;
+  if (activeElement instanceof HTMLElement && ["INPUT", "TEXTAREA"].includes(activeElement.tagName)) {
+    activeElement.blur();
+  }
+}
+
 export function Sidebar({ workspaceId, pages, activePageId, open, onToggle, onSelect, onLocalChange }: SidebarProps) {
   const visiblePages = useMemo(() => pages.filter((page) => !page.archivedAt && !page.deletedAt), [pages]);
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
@@ -131,6 +138,8 @@ export function Sidebar({ workspaceId, pages, activePageId, open, onToggle, onSe
   }
 
   function selectPage(pageId: string) {
+    blurActiveTextInput();
+    setEditingPageId(null);
     expandAncestors(pageId);
     onSelect(pageId);
   }
@@ -161,6 +170,7 @@ export function Sidebar({ workspaceId, pages, activePageId, open, onToggle, onSe
         return next;
       });
     }
+    blurActiveTextInput();
     onSelect(id);
     onLocalChange();
   }
@@ -252,16 +262,16 @@ export function Sidebar({ workspaceId, pages, activePageId, open, onToggle, onSe
                 }}
               />
             ) : (
-              <button className="page-title-button" onClick={() => selectPage(page.id)}>{page.icon ?? ""}{page.title}</button>
+              <button className="page-title-button" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => selectPage(page.id)}>{page.icon ?? ""}{page.title}</button>
             )}
             {editingPageId === page.id ? (
-              <button title="Save" onClick={() => void saveRename(page.id)}><Check size={14} /></button>
+              <button type="button" title="Save" onClick={() => void saveRename(page.id)}><Check size={14} /></button>
             ) : (
-              <button title="Rename" onClick={() => startRename(page)}><Pencil size={14} /></button>
+              <button type="button" title="Rename" onClick={() => startRename(page)}><Pencil size={14} /></button>
             )}
-            <button title="Create subpage" onClick={() => void createPage(page.id)}><FilePlus2 size={14} /></button>
-            <button title="Archive" onClick={() => requestDelete(page)}><Archive size={14} /></button>
-            {editingPageId === page.id ? <button title="Cancel" onClick={() => setEditingPageId(null)}><X size={14} /></button> : null}
+            <button type="button" title="Create subpage" onClick={() => void createPage(page.id)}><FilePlus2 size={14} /></button>
+            <button type="button" title="Archive" onClick={() => requestDelete(page)}><Archive size={14} /></button>
+            {editingPageId === page.id ? <button type="button" title="Cancel" onClick={() => setEditingPageId(null)}><X size={14} /></button> : null}
           </div>
           {childCount > 0 && !isCollapsed ? renderBranch(page.id, depth + 1) : null}
         </div>
@@ -275,7 +285,7 @@ export function Sidebar({ workspaceId, pages, activePageId, open, onToggle, onSe
       <div className="sidebar-search-results">
         <p className="sidebar-search-count">{searchResults.length} result{searchResults.length === 1 ? "" : "s"}</p>
         {searchResults.map(({ page, path, body }) => (
-          <button className="sidebar-search-result" key={page.id} onClick={() => selectPage(page.id)}>
+          <button className="sidebar-search-result" type="button" key={page.id} onMouseDown={(event) => event.preventDefault()} onClick={() => selectPage(page.id)}>
             <strong>{page.title}</strong>
             <span>{path}</span>
             {body ? <small>{body.slice(0, 96)}</small> : null}
@@ -287,12 +297,12 @@ export function Sidebar({ workspaceId, pages, activePageId, open, onToggle, onSe
 
   return (
     <>
-      <button className="mobile-menu" title="Pages" onClick={onToggle}><Menu size={18} /></button>
+      <button className="mobile-menu" type="button" title="Pages" onClick={onToggle}><Menu size={18} /></button>
       {open ? <button className="sidebar-backdrop" type="button" aria-label="Close pages" onClick={onToggle} /> : null}
       <aside className={`sidebar ${open ? "open" : ""}`}>
         <div className="sidebar-header">
           <strong>Pages</strong>
-          <button title="Create page" onClick={() => void createPage(null)}><Plus size={16} /></button>
+          <button type="button" title="Create page" onClick={() => void createPage(null)}><Plus size={16} /></button>
         </div>
         <label className="sidebar-search">
           <Search size={14} />
