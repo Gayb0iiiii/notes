@@ -19,6 +19,7 @@ export const notionImportStatuses = [
 export type NotionImportStatus = (typeof notionImportStatuses)[number];
 export type NotionImportSeverity = "warning" | "error";
 export type NotionImportFileKind = "html" | "markdown" | "csv" | "image" | "pdf" | "file" | "unknown";
+export type NotionImportPageAction = "add" | "skip";
 
 export interface NotionImportCounts {
   fileCount: number;
@@ -39,6 +40,10 @@ export interface NotionImportPagePreview {
   markdownPath?: string;
   csvPath?: string;
   assetPaths: string[];
+  path?: string;
+  action?: NotionImportPageAction;
+  reason?: string;
+  existingPageId?: string;
 }
 
 export interface NotionImportAssetPreview {
@@ -56,6 +61,16 @@ export interface NotionImportIssue {
   message: string;
 }
 
+export interface NotionImportApplyResult {
+  importId: string;
+  status: NotionImportStatus;
+  addedPages: number;
+  skippedPages: number;
+  errorCount: number;
+  rootPageId: string | null;
+  addedPageIds: string[];
+}
+
 export interface NotionImportPreview {
   importId: string;
   status: NotionImportStatus;
@@ -65,6 +80,12 @@ export interface NotionImportPreview {
   assets: NotionImportAssetPreview[];
   issues: NotionImportIssue[];
   warnings: string[];
+  diff?: {
+    addPages: number;
+    skipPages: number;
+    addAssets: number;
+  };
+  applyResult?: NotionImportApplyResult;
 }
 
 const htmlExtensions = new Set([".html", ".htm"]);
