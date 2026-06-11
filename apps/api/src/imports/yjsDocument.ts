@@ -1,4 +1,5 @@
-import * as Y from "yjs";
+// @ts-ignore - yjs is installed by the workspace collab package; this keeps the API lockfile stable.
+import * as Y from "../../../collab/node_modules/yjs/dist/yjs.mjs";
 
 function textNode(value: string): Y.XmlText | null {
   const clean = value.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\s+/g, " ").trim();
