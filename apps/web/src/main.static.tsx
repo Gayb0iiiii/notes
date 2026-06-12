@@ -8,6 +8,7 @@ import "./styles/settings.css";
 import "./styles/admin-mobile.css";
 import "./styles/knowledge-base.css";
 import "./styles/page-history.css";
+import "./styles/importer.css";
 import "./styles/native-safe-area.css";
 
 installDiagnostics();
